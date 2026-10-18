@@ -688,14 +688,11 @@ and [Qwen3.5](https://huggingface.co/Qwen) as the VLM backbone. Thanks to all up
 If you find SimpleMemVLA useful, please cite:
 
 ```bibtex
-@misc{yin2026simplememvlasimpleeffectivenativevideo,
-      title={SimpleMemVLA: A Simple but Effective Native-Video Memory for Vision-Language-Action Models}, 
-      author={Cheng Yin and Wang Xu and Junpeng Yang and Sikyuen Tam and Hanyu Liu and Yuan Yao and Xiangrui Zeng and Junbo Cui and Yequan Wang and Zhouping Yin and Yankai Lin},
-      year={2026},
-      eprint={2609.05533},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2609.05533}, 
+@article{yin2026simplememvla,
+  title={SimpleMemVLA: A Simple but Effective Native-Video Memory for Vision-Language-Action Models},
+  author={Yin, Cheng and Xu, Wang and Yang, Junpeng and Tam, Sikyuen and Liu, Hanyu and Yao, Yuan and Zeng, Xiangrui and Cui, Junbo and Wang, Yequan and Yin, Zhouping and others},
+  journal={arXiv preprint arXiv:2609.05533},
+  year={2026}
 }
 ```
 
