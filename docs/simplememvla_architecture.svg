@@ -1,0 +1,434 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1700 1190" width="1700" height="1190" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei','Helvetica Neue',Arial,sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#EA580C"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#059669"/>
+    </marker>
+    <marker id="arrI" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4F46E5"/>
+    </marker>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <linearGradient id="gTitle" x1="0" x2="1">
+      <stop offset="0" stop-color="#7C3AED"/><stop offset="0.5" stop-color="#EA580C"/><stop offset="1" stop-color="#E11D48"/>
+    </linearGradient>
+    <linearGradient id="gVlm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8B5CF6"/><stop offset="1" stop-color="#6D28D9"/>
+    </linearGradient>
+    <linearGradient id="gDit" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F43F5E"/><stop offset="1" stop-color="#BE123C"/>
+    </linearGradient>
+    <linearGradient id="gCond" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FB923C"/><stop offset="1" stop-color="#EA580C"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1700" height="1190" fill="#FFFFFF"/>
+
+  <!-- ===== Title ===== -->
+  <text x="850" y="40" text-anchor="middle" font-size="26" font-weight="700" fill="url(#gTitle)">SimpleMemVLA 模型结构：原生视频记忆 + Sub-task 文本通道 + DiT Flow-Matching 动作头</text>
+  <text x="850" y="66" text-anchor="middle" font-size="14" fill="#64748B">Qwen3.5-4B VLM 直接以“带时间戳的视频”读取长历史 → 生成当前子任务 → 子任务 span 的隐状态作为唯一条件驱动 DiT 预测动作块</text>
+
+  <!-- ===================== Column A: Inputs ===================== -->
+  <text x="180" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">① 输入</text>
+
+  <!-- History video -->
+  <g filter="url(#sh)">
+    <rect x="30" y="110" width="300" height="200" rx="12" fill="#EFF6FF" stroke="#3B82F6" stroke-width="2"/>
+  </g>
+  <rect x="30" y="110" width="300" height="34" rx="12" fill="#3B82F6"/>
+  <rect x="30" y="130" width="300" height="14" fill="#3B82F6"/>
+  <text x="180" y="133" text-anchor="middle" font-size="14.5" font-weight="700" fill="#fff">主相机历史视频（video channel）</text>
+  <!-- film strip -->
+  <g>
+    <rect x="46" y="156" width="268" height="46" rx="5" fill="#1E3A8A"/>
+    <rect x="52" y="162" width="34" height="34" rx="3" fill="#93C5FD"/>
+    <rect x="90" y="162" width="34" height="34" rx="3" fill="#93C5FD"/>
+    <rect x="128" y="162" width="34" height="34" rx="3" fill="#60A5FA"/>
+    <rect x="166" y="162" width="34" height="34" rx="3" fill="#60A5FA"/>
+    <text x="219" y="185" text-anchor="middle" font-size="16" fill="#BFDBFE">···</text>
+    <rect x="238" y="162" width="34" height="34" rx="3" fill="#3B82F6"/>
+    <rect x="276" y="162" width="34" height="34" rx="3" fill="#2563EB" stroke="#FDE047" stroke-width="2"/>
+  </g>
+  <text x="52" y="220" font-size="11" fill="#1E40AF">t−T</text>
+  <text x="300" y="220" font-size="11" fill="#1E40AF">now</text>
+  <text x="44" y="242" font-size="12.5" fill="#1E293B">• 窗口 history_video_sec，按 history_video_fps 采样</text>
+  <text x="44" y="261" font-size="12.5" fill="#1E293B">• variable_history：不足窗口只喂真实帧（偶数帧）</text>
+  <text x="44" y="280" font-size="12.5" fill="#1E293B">• 每 2 帧 = 1 个 temporal patch</text>
+  <text x="44" y="299" font-size="12.5" fill="#1E293B">• 例：RoboMME 60s@2fps → ≤120 帧</text>
+
+  <!-- Wrist -->
+  <g filter="url(#sh)">
+    <rect x="30" y="328" width="300" height="104" rx="12" fill="#ECFEFF" stroke="#06B6D4" stroke-width="2"/>
+  </g>
+  <rect x="30" y="328" width="300" height="32" rx="12" fill="#06B6D4"/>
+  <rect x="30" y="346" width="300" height="14" fill="#06B6D4"/>
+  <text x="180" y="350" text-anchor="middle" font-size="14.5" font-weight="700" fill="#fff">腕部相机当前帧（image channel）</text>
+  <rect x="46" y="372" width="40" height="40" rx="4" fill="#67E8F9" stroke="#0891B2"/>
+  <rect x="92" y="372" width="40" height="40" rx="4" fill="#67E8F9" stroke="#0891B2"/>
+  <text x="142" y="388" font-size="12.5" fill="#1E293B">只给当前 1 帧</text>
+  <text x="142" y="406" font-size="12.5" fill="#1E293B">RMBench: 左/右腕 2 路</text>
+  <text x="46" y="426" font-size="11.5" fill="#0E7490">输入格式本身区分“过去 vs 现在”</text>
+
+  <!-- Prompt -->
+  <g filter="url(#sh)">
+    <rect x="30" y="450" width="300" height="318" rx="12" fill="#FFFBEB" stroke="#F59E0B" stroke-width="2"/>
+  </g>
+  <rect x="30" y="450" width="300" height="32" rx="12" fill="#F59E0B"/>
+  <rect x="30" y="468" width="300" height="14" fill="#F59E0B"/>
+  <text x="180" y="472" text-anchor="middle" font-size="14.5" font-weight="700" fill="#fff">文本 Prompt（chat template）</text>
+  <rect x="44" y="492" width="272" height="196" rx="6" fill="#FEF3C7"/>
+  <text x="52" y="510" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace">user:</text>
+  <text x="52" y="527" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> Front camera: &lt;video&gt;</text>
+  <text x="52" y="544" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> Wrist camera: &lt;image&gt;</text>
+  <text x="52" y="561" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> The robot is a {robot_tag}.</text>
+  <text x="52" y="578" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> Control frequency {hz} Hz.</text>
+  <text x="52" y="595" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> Next {H} actions ... sub-task.</text>
+  <text x="52" y="612" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> Overall task: {instruction}.</text>
+  <text x="52" y="629" font-size="11.5" fill="#78350F" font-family="Menlo,Consolas,monospace"> Identify the current sub-task.</text>
+  <text x="52" y="651" font-size="11.5" fill="#B45309" font-family="Menlo,Consolas,monospace">assistant: &lt;think&gt;&lt;/think&gt;</text>
+  <text x="52" y="668" font-size="11.5" fill="#B91C1C" font-family="Menlo,Consolas,monospace" font-weight="700"> {sub-task}&lt;|im_end|&gt;</text>
+  <text x="44" y="708" font-size="12" fill="#1E293B">• enable_thinking=False（空 think 块）</text>
+  <text x="44" y="726" font-size="12" fill="#1E293B">• 训练：assistant 段 = GT 子任务</text>
+  <text x="44" y="744" font-size="12" fill="#1E293B">• 推理：add_generation_prompt 后由模型生成</text>
+  <text x="44" y="760" font-size="11" fill="#92400E">messages.py · build_simplememvla_messages</text>
+
+  <!-- State -->
+  <g filter="url(#sh)">
+    <rect x="30" y="786" width="300" height="62" rx="12" fill="#ECFDF5" stroke="#10B981" stroke-width="2"/>
+  </g>
+  <text x="46" y="811" font-size="14.5" font-weight="700" fill="#047857">本体状态 state ∈ ℝ^state_dim</text>
+  <text x="46" y="833" font-size="12" fill="#1E293B">MeanStd 归一化（std 下限 1e-2）→ 直连 DiT</text>
+
+  <!-- ===================== Column B: VLM ===================== -->
+  <text x="600" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">② VLM 主干（读取记忆 + 生成子任务）</text>
+  <g filter="url(#sh)">
+    <rect x="370" y="110" width="460" height="660" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+  </g>
+  <rect x="370" y="110" width="460" height="10" rx="5" fill="url(#gVlm)"/>
+  <text x="600" y="142" text-anchor="middle" font-size="16" font-weight="700" fill="#5B21B6">Qwen3.5-4B（AutoModelForImageTextToText，全参微调）</text>
+
+  <!-- Vision encoder -->
+  <rect x="390" y="156" width="420" height="70" rx="9" fill="#EDE9FE" stroke="#8B5CF6" stroke-width="1.5"/>
+  <text x="600" y="178" text-anchor="middle" font-size="14" font-weight="700" fill="#4C1D95">Vision Encoder（ViT + patch merger）</text>
+  <text x="600" y="198" text-anchor="middle" font-size="12" fill="#3B0764">视频：每 temporal patch 前插纯文本时间戳 &lt;X.X seconds&gt;</text>
+  <text x="600" y="216" text-anchor="middle" font-size="12" fill="#3B0764">图像：腕部当前帧 → image tokens</text>
+
+  <!-- Text embed -->
+  <rect x="390" y="236" width="420" height="44" rx="9" fill="#EDE9FE" stroke="#8B5CF6" stroke-width="1.5"/>
+  <text x="600" y="263" text-anchor="middle" font-size="13.5" font-weight="700" fill="#4C1D95">Tokenizer + Token Embedding（文本 token）</text>
+
+  <!-- Merged token strip -->
+  <text x="392" y="304" font-size="12" fill="#5B21B6" font-weight="700">交错的多模态序列（≈5.6k tokens / 60s 历史）</text>
+  <g font-size="10" text-anchor="middle">
+    <rect x="390" y="312" width="44" height="28" rx="4" fill="#FDE68A"/><text x="412" y="330" fill="#78350F">Front:</text>
+    <rect x="437" y="312" width="34" height="28" rx="4" fill="#E9D5FF"/><text x="454" y="330" fill="#581C87">&lt;0.0s&gt;</text>
+    <rect x="474" y="312" width="22" height="28" rx="3" fill="#93C5FD"/>
+    <rect x="498" y="312" width="22" height="28" rx="3" fill="#93C5FD"/>
+    <rect x="523" y="312" width="34" height="28" rx="4" fill="#E9D5FF"/><text x="540" y="330" fill="#581C87">&lt;1.0s&gt;</text>
+    <rect x="560" y="312" width="22" height="28" rx="3" fill="#60A5FA"/>
+    <rect x="584" y="312" width="22" height="28" rx="3" fill="#60A5FA"/>
+    <text x="616" y="331" fill="#475569" font-size="13">···</text>
+    <rect x="628" y="312" width="44" height="28" rx="4" fill="#FDE68A"/><text x="650" y="330" fill="#78350F">Wrist:</text>
+    <rect x="675" y="312" width="22" height="28" rx="3" fill="#67E8F9"/>
+    <rect x="699" y="312" width="44" height="28" rx="4" fill="#FDE68A"/><text x="721" y="330" fill="#78350F">prompt</text>
+    <rect x="746" y="312" width="64" height="28" rx="4" fill="#FCA5A5" stroke="#DC2626" stroke-width="1.5"/><text x="778" y="330" fill="#7F1D1D" font-weight="700">sub-task</text>
+  </g>
+  <text x="600" y="362" text-anchor="middle" font-size="12" fill="#5B21B6">3D M-RoPE 位置 (t, h, w) ← backbone.get_rope_index</text>
+
+  <!-- LLM decoder -->
+  <rect x="390" y="378" width="420" height="160" rx="10" fill="#DDD6FE" stroke="#7C3AED" stroke-width="2"/>
+  <text x="600" y="404" text-anchor="middle" font-size="15" font-weight="700" fill="#4C1D95">LLM Decoder（因果自注意力）</text>
+  <g>
+    <rect x="410" y="418" width="380" height="22" rx="5" fill="#C4B5FD"/>
+    <rect x="410" y="445" width="380" height="22" rx="5" fill="#C4B5FD"/>
+    <text x="600" y="483" text-anchor="middle" font-size="14" fill="#4C1D95">⋮  N 层</text>
+    <rect x="410" y="492" width="380" height="22" rx="5" fill="#A78BFA"/>
+    <text x="600" y="434" text-anchor="middle" font-size="11.5" fill="#3B0764">Decoder Layer（线性注意力/全注意力混合，FLA kernels）</text>
+    <text x="600" y="461" text-anchor="middle" font-size="11.5" fill="#3B0764">Decoder Layer</text>
+    <text x="600" y="508" text-anchor="middle" font-size="11.5" fill="#fff">Decoder Layer → last_hidden_state</text>
+  </g>
+  <text x="600" y="531" text-anchor="middle" font-size="11.5" fill="#5B21B6">“记忆” = 原生 self-attention 在决策时从历史中选证据（无专门记忆模块）</text>
+
+  <!-- hidden states -->
+  <text x="392" y="560" font-size="12" fill="#5B21B6" font-weight="700">hidden states  H ∈ ℝ^{B×L×d_vlm}</text>
+  <g>
+    <rect x="390" y="568" width="300" height="26" rx="4" fill="#C4B5FD"/>
+    <text x="540" y="586" text-anchor="middle" font-size="11" fill="#3B0764">视频 / 图像 / prompt 位置（不直接给动作头）</text>
+    <rect x="694" y="568" width="116" height="26" rx="4" fill="#FCA5A5" stroke="#DC2626" stroke-width="1.5"/>
+    <text x="752" y="586" text-anchor="middle" font-size="11.5" fill="#7F1D1D" font-weight="700">sub-task span</text>
+  </g>
+
+  <!-- LM head -->
+  <rect x="390" y="610" width="420" height="146" rx="10" fill="#EDE9FE" stroke="#8B5CF6" stroke-width="1.5"/>
+  <text x="600" y="634" text-anchor="middle" font-size="14.5" font-weight="700" fill="#4C1D95">LM Head → 子任务文本</text>
+  <text x="406" y="658" font-size="12.5" fill="#1E293B"><tspan font-weight="700" fill="#0D9488">训练：</tspan>labels 只保留最后一个 &lt;/think&gt; 之后的 token</text>
+  <text x="406" y="677" font-size="12.5" fill="#1E293B">　　　稀疏 CE（只对 span 位置算 logits）→ L_vl</text>
+  <text x="406" y="700" font-size="12.5" fill="#1E293B"><tspan font-weight="700" fill="#4F46E5">推理：</tspan>贪心解码 ≤256 tok，屏蔽 &lt;think&gt;/&lt;/think&gt;</text>
+  <text x="406" y="719" font-size="12.5" fill="#1E293B">　　　遇 &lt;|im_end|&gt; 停止（虚线：自回归回填）</text>
+  <text x="406" y="744" font-size="11" fill="#6D28D9">modeling_simplememvla.py · _sparse_ce_loss / generate_subtask</text>
+
+  <!-- arrows within VLM / from inputs -->
+  <path d="M330,190 C355,190 360,180 388,180" fill="none" stroke="#3B82F6" stroke-width="2.2" marker-end="url(#arr)"/>
+  <path d="M330,380 C365,380 360,212 388,212" fill="none" stroke="#06B6D4" stroke-width="2.2" marker-end="url(#arr)"/>
+  <path d="M330,560 C370,560 352,258 388,258" fill="none" stroke="#F59E0B" stroke-width="2.2" marker-end="url(#arr)"/>
+  <line x1="600" y1="280" x2="600" y2="292" stroke="#7C3AED" stroke-width="2"/>
+  <line x1="600" y1="340" x2="600" y2="348" stroke="#7C3AED" stroke-width="2"/>
+  <line x1="600" y1="366" x2="600" y2="376" stroke="#7C3AED" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="600" y1="538" x2="600" y2="548" stroke="#7C3AED" stroke-width="2"/>
+  <line x1="752" y1="594" x2="752" y2="608" stroke="#7C3AED" stroke-width="2" marker-end="url(#arr)"/>
+  <!-- autoregressive feedback -->
+  <path d="M812,690 C828,690 828,326 812,326" fill="none" stroke="#4F46E5" stroke-width="1.8" stroke-dasharray="6,4" marker-end="url(#arrI)"/>
+
+  <!-- ===================== Column C: Condition ===================== -->
+  <text x="1000" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">③ 条件通道</text>
+  <g filter="url(#sh)">
+    <rect x="866" y="110" width="262" height="600" rx="14" fill="#FFF7ED" stroke="#EA580C" stroke-width="2"/>
+  </g>
+  <rect x="866" y="110" width="262" height="10" rx="5" fill="url(#gCond)"/>
+  <text x="997" y="142" text-anchor="middle" font-size="15" font-weight="700" fill="#9A3412">Sub-task Span 条件</text>
+  <text x="997" y="161" text-anchor="middle" font-size="11.5" fill="#C2410C">history → action 的唯一通道（窄文本瓶颈）</text>
+
+  <rect x="882" y="174" width="230" height="112" rx="9" fill="#FFEDD5" stroke="#FB923C"/>
+  <text x="997" y="195" text-anchor="middle" font-size="13.5" font-weight="700" fill="#7C2D12">subtask_span_mask</text>
+  <text x="894" y="216" font-size="12" fill="#1E293B">• 定位最后一个 &lt;/think&gt;</text>
+  <text x="894" y="235" font-size="12" fill="#1E293B">• 跳过紧随的 "\n" / "\n\n"</text>
+  <text x="894" y="254" font-size="12" fill="#1E293B">• 其后全部 token = span</text>
+  <text x="894" y="274" font-size="11" fill="#9A3412">训练 / 推理共用同一函数 → 无漂移</text>
+
+  <rect x="882" y="300" width="230" height="250" rx="9" fill="#FFEDD5" stroke="#FB923C"/>
+  <text x="997" y="322" text-anchor="middle" font-size="13.5" font-weight="700" fill="#7C2D12">_gather_condition</text>
+  <text x="997" y="340" text-anchor="middle" font-size="11" fill="#9A3412">按 span 抽取并右侧 pad 到 max_len</text>
+  <g font-size="12">
+    <rect x="894" y="352" width="206" height="40" rx="6" fill="#FED7AA"/>
+    <text x="902" y="369" fill="#7C2D12" font-weight="700">cond_hidden  (B, L, d_vlm)</text>
+    <text x="902" y="385" fill="#1E293B" font-size="11">span 位置的最后层隐状态</text>
+    <rect x="894" y="398" width="206" height="40" rx="6" fill="#FED7AA"/>
+    <text x="902" y="415" fill="#7C2D12" font-weight="700">cond_token   (B, L, d_vlm)</text>
+    <text x="902" y="431" fill="#1E293B" font-size="11">span token 的输入 embedding</text>
+    <rect x="894" y="444" width="206" height="40" rx="6" fill="#FED7AA"/>
+    <text x="902" y="461" fill="#7C2D12" font-weight="700">cond_pos     (3, B, L)</text>
+    <text x="902" y="477" fill="#1E293B" font-size="11">沿用 VLM 的 M-RoPE 位置</text>
+    <rect x="894" y="490" width="206" height="40" rx="6" fill="#FED7AA"/>
+    <text x="902" y="507" fill="#7C2D12" font-weight="700">cond_mask    (B, L)</text>
+    <text x="902" y="523" fill="#1E293B" font-size="11">有效 token 掩码</text>
+  </g>
+
+  <rect x="882" y="564" width="230" height="132" rx="9" fill="#FFFFFF" stroke="#FDBA74" stroke-dasharray="4,3"/>
+  <text x="997" y="585" text-anchor="middle" font-size="12.5" font-weight="700" fill="#9A3412">为什么只用 sub-task？</text>
+  <text x="894" y="606" font-size="11.5" fill="#1E293B">VLM 必须先用语言说出“现在</text>
+  <text x="894" y="623" font-size="11.5" fill="#1E293B">该做哪一步”，这一步依赖历史</text>
+  <text x="894" y="640" font-size="11.5" fill="#1E293B">证据；span 的上下文隐状态把</text>
+  <text x="894" y="657" font-size="11.5" fill="#1E293B">记忆压成短文本，再交给动作头。</text>
+  <text x="894" y="682" font-size="11" fill="#C2410C">消融：去掉 hidden 或 token 输入均掉点</text>
+
+  <!-- arrow hidden span -> condition -->
+  <path d="M810,581 C845,581 845,420 880,420" fill="none" stroke="#EA580C" stroke-width="2.4" marker-end="url(#arrO)"/>
+  <line x1="997" y1="286" x2="997" y2="298" stroke="#EA580C" stroke-width="2" marker-end="url(#arrO)"/>
+
+  <!-- ===================== Column D: DiT ===================== -->
+  <text x="1400" y="98" text-anchor="middle" font-size="15" font-weight="700" fill="#334155">④ 动作专家</text>
+  <g filter="url(#sh)">
+    <rect x="1150" y="110" width="500" height="738" rx="14" fill="#FFF1F2" stroke="#E11D48" stroke-width="2"/>
+  </g>
+  <rect x="1150" y="110" width="500" height="10" rx="5" fill="url(#gDit)"/>
+  <text x="1400" y="142" text-anchor="middle" font-size="16" font-weight="700" fill="#9F1239">DiT Flow-Matching Action Head（≈0.9B）</text>
+  <text x="1400" y="161" text-anchor="middle" font-size="11.5" fill="#BE123C">hidden 2048 · depth 16 · heads 16 · mlp_ratio 3.5 · 双向注意力</text>
+
+  <!-- 4 input boxes -->
+  <rect x="1166" y="174" width="232" height="84" rx="8" fill="#FFE4E6" stroke="#FB7185"/>
+  <text x="1282" y="193" text-anchor="middle" font-size="13" font-weight="700" fill="#881337">Condition tokens × L</text>
+  <text x="1174" y="212" font-size="11.2" fill="#1E293B">L2norm(condition_proj(h))</text>
+  <text x="1174" y="229" font-size="11.2" fill="#1E293B">+ condition_token_proj(e)</text>
+  <text x="1174" y="246" font-size="11.2" fill="#1E293B">+ condition_type</text>
+
+  <rect x="1406" y="174" width="232" height="84" rx="8" fill="#D1FAE5" stroke="#10B981"/>
+  <text x="1522" y="193" text-anchor="middle" font-size="13" font-weight="700" fill="#065F46">State token × 1</text>
+  <text x="1414" y="212" font-size="11.2" fill="#1E293B">state_proj(s) + state_type</text>
+  <text x="1414" y="229" font-size="11.2" fill="#1E293B">训练可选 state_dropout</text>
+  <text x="1414" y="246" font-size="11.2" fill="#1E293B">（mask 掉 key，默认 0）</text>
+
+  <rect x="1166" y="266" width="232" height="84" rx="8" fill="#FFE4E6" stroke="#FB7185"/>
+  <text x="1282" y="285" text-anchor="middle" font-size="13" font-weight="700" fill="#881337">Noisy action tokens × H</text>
+  <text x="1174" y="304" font-size="11.2" fill="#1E293B">action_proj: Linear‑SiLU‑Linear</text>
+  <text x="1174" y="321" font-size="11.2" fill="#1E293B">+ action_type + action_pos[H]</text>
+  <text x="1174" y="338" font-size="11.2" fill="#1E293B">输入 a_t ∈ ℝ^{H×action_dim}</text>
+
+  <rect x="1406" y="266" width="232" height="84" rx="8" fill="#FEF3C7" stroke="#F59E0B"/>
+  <text x="1522" y="285" text-anchor="middle" font-size="13" font-weight="700" fill="#78350F">Timestep embedding</text>
+  <text x="1414" y="304" font-size="11.2" fill="#1E293B">sin/cos(256) → MLP → c_t</text>
+  <text x="1414" y="321" font-size="11.2" fill="#1E293B">训练 t ~ Beta(1.5, 1.0)</text>
+  <text x="1414" y="338" font-size="11.2" fill="#1E293B">推理 t: 1 → 0（10 步）</text>
+
+  <!-- sequence strip -->
+  <text x="1168" y="374" font-size="12" font-weight="700" fill="#9F1239">拼接序列 x = [cond × L | state | action × H]</text>
+  <g>
+    <rect x="1166" y="382" width="196" height="26" rx="4" fill="#FDA4AF"/>
+    <text x="1264" y="400" text-anchor="middle" font-size="11.5" fill="#881337">cond_1 … cond_L</text>
+    <rect x="1366" y="382" width="40" height="26" rx="4" fill="#6EE7B7"/>
+    <text x="1386" y="400" text-anchor="middle" font-size="11.5" fill="#065F46">s</text>
+    <rect x="1410" y="382" width="226" height="26" rx="4" fill="#FB7185"/>
+    <text x="1523" y="400" text-anchor="middle" font-size="11.5" fill="#fff">a_1 … a_H</text>
+  </g>
+  <text x="1400" y="428" text-anchor="middle" font-size="11.5" fill="#9F1239">位置：cond 用 VLM 的 3D 位置；state = max+1；action 依次 +1（3 轴相同）</text>
+
+  <!-- DiT block -->
+  <rect x="1166" y="440" width="470" height="250" rx="10" fill="#FFE4E6" stroke="#E11D48" stroke-width="2"/>
+  <text x="1401" y="462" text-anchor="middle" font-size="14.5" font-weight="700" fill="#881337">DiT Block × 16（adaLN-Zero）</text>
+  <g font-size="11" text-anchor="middle">
+    <!-- row 1 -->
+    <rect x="1178" y="476" width="62" height="40" rx="6" fill="#fff" stroke="#FB7185"/><text x="1209" y="500" fill="#881337">LayerNorm</text>
+    <rect x="1258" y="476" width="72" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B"/><text x="1294" y="493" fill="#78350F">modulate</text><text x="1294" y="508" fill="#78350F">shift, scale</text>
+    <rect x="1348" y="476" width="150" height="40" rx="6" fill="#FECDD3" stroke="#E11D48"/><text x="1423" y="493" fill="#881337" font-weight="700">Rotary Self-Attn</text><text x="1423" y="508" fill="#881337">M-RoPE · key padding</text>
+    <rect x="1516" y="476" width="56" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B"/><text x="1544" y="500" fill="#78350F">× gate</text>
+    <circle cx="1606" cy="496" r="15" fill="#fff" stroke="#E11D48" stroke-width="1.5"/><text x="1606" y="501" fill="#E11D48" font-size="16">+</text>
+    <!-- row 2 -->
+    <rect x="1178" y="540" width="62" height="40" rx="6" fill="#fff" stroke="#FB7185"/><text x="1209" y="564" fill="#881337">LayerNorm</text>
+    <rect x="1258" y="540" width="72" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B"/><text x="1294" y="557" fill="#78350F">modulate</text><text x="1294" y="572" fill="#78350F">shift, scale</text>
+    <rect x="1348" y="540" width="150" height="40" rx="6" fill="#FECDD3" stroke="#E11D48"/><text x="1423" y="557" fill="#881337" font-weight="700">MLP</text><text x="1423" y="572" fill="#881337">2048→7168→2048 GELU</text>
+    <rect x="1516" y="540" width="56" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B"/><text x="1544" y="564" fill="#78350F">× gate</text>
+    <circle cx="1606" cy="560" r="15" fill="#fff" stroke="#E11D48" stroke-width="1.5"/><text x="1606" y="565" fill="#E11D48" font-size="16">+</text>
+  </g>
+  <g stroke="#9F1239" stroke-width="1.5" fill="none">
+    <line x1="1240" y1="496" x2="1256" y2="496" marker-end="url(#arr)"/>
+    <line x1="1330" y1="496" x2="1346" y2="496" marker-end="url(#arr)"/>
+    <line x1="1498" y1="496" x2="1514" y2="496" marker-end="url(#arr)"/>
+    <line x1="1572" y1="496" x2="1589" y2="496" marker-end="url(#arr)"/>
+    <line x1="1240" y1="560" x2="1256" y2="560" marker-end="url(#arr)"/>
+    <line x1="1330" y1="560" x2="1346" y2="560" marker-end="url(#arr)"/>
+    <line x1="1498" y1="560" x2="1514" y2="560" marker-end="url(#arr)"/>
+    <line x1="1572" y1="560" x2="1589" y2="560" marker-end="url(#arr)"/>
+    <path d="M1606,511 L1606,526 L1209,526 L1209,538" marker-end="url(#arr)"/>
+  </g>
+  <text x="1178" y="604" font-size="11.5" fill="#1E293B">• adaLN：SiLU → Linear(2048 → 6×2048)，零初始化（c_t 驱动 6 组参数）</text>
+  <text x="1178" y="623" font-size="11.5" fill="#1E293B">• RoPE：Qwen 对齐的交错 M-RoPE，θ / mrope_section / partial 继承 backbone</text>
+  <text x="1178" y="642" font-size="11.5" fill="#1E293B">• 全序列双向注意力：action 可看 cond / state / 其他 action</text>
+  <text x="1178" y="661" font-size="11.5" fill="#1E293B">• 每层残差：x ← x + g·Attn(mod(LN x))；x ← x + g·MLP(mod(LN x))</text>
+  <text x="1178" y="680" font-size="11" fill="#BE123C">dit_action_head.py · DiTBlock / RotarySelfAttention</text>
+
+  <!-- final -->
+  <rect x="1166" y="704" width="470" height="56" rx="9" fill="#FFE4E6" stroke="#FB7185"/>
+  <text x="1401" y="726" text-anchor="middle" font-size="13.5" font-weight="700" fill="#881337">Final Layer：取最后 H 个 token</text>
+  <text x="1401" y="746" text-anchor="middle" font-size="12" fill="#1E293B">LayerNorm → adaLN(shift, scale) → Linear(2048 → action_dim)（零初始化）</text>
+
+  <rect x="1236" y="774" width="330" height="56" rx="10" fill="url(#gDit)"/>
+  <text x="1401" y="798" text-anchor="middle" font-size="14.5" font-weight="700" fill="#fff">速度场 v_θ ∈ ℝ^{H × action_dim}</text>
+  <text x="1401" y="818" text-anchor="middle" font-size="12" fill="#FFE4E6">例：LIBERO H=16, dim=7 · RoboMME H=30, dim=8</text>
+
+  <!-- DiT internal arrows -->
+  <g stroke="#9F1239" stroke-width="1.8" fill="none">
+    <line x1="1401" y1="690" x2="1401" y2="702" marker-end="url(#arr)"/>
+    <line x1="1401" y1="760" x2="1401" y2="772" marker-end="url(#arr)"/>
+  </g>
+  <path d="M1638,330 C1660,350 1660,470 1638,480" fill="none" stroke="#F59E0B" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr)"/>
+  <text x="1662" y="410" font-size="11" fill="#B45309" transform="rotate(90 1662 410)">c_t → adaLN</text>
+
+  <!-- condition -> DiT -->
+  <path d="M1112,440 C1140,440 1135,216 1164,216" fill="none" stroke="#EA580C" stroke-width="2.4" marker-end="url(#arrO)"/>
+
+  <!-- state -> DiT : route below -->
+  <path d="M330,817 L348,817 L348,866 L1684,866 L1684,216 L1640,216" fill="none" stroke="#059669" stroke-width="2.2" marker-end="url(#arrG)"/>
+  <text x="1000" y="860" text-anchor="middle" font-size="11.5" fill="#047857">归一化 state → State token（不经过 VLM）</text>
+
+  <!-- ===================== Bottom: Training ===================== -->
+  <g filter="url(#sh)">
+    <rect x="30" y="884" width="800" height="292" rx="14" fill="#F0FDFA" stroke="#0D9488" stroke-width="2"/>
+  </g>
+  <rect x="30" y="884" width="800" height="36" rx="14" fill="#0D9488"/>
+  <rect x="30" y="904" width="800" height="16" fill="#0D9488"/>
+  <text x="430" y="908" text-anchor="middle" font-size="15.5" font-weight="700" fill="#fff">训练（SFT，train.py → SimpleMemVLATrainer）</text>
+
+  <g font-size="11.5" text-anchor="middle">
+    <rect x="44" y="932" width="140" height="48" rx="7" fill="#CCFBF1" stroke="#14B8A6"/>
+    <text x="114" y="951" fill="#134E4A" font-weight="700">LeRobot v3 数据集</text><text x="114" y="969" fill="#134E4A">delta_timestamps 取窗</text>
+    <rect x="200" y="932" width="140" height="48" rx="7" fill="#CCFBF1" stroke="#14B8A6"/>
+    <text x="270" y="951" fill="#134E4A" font-weight="700">历史 clip + 腕部帧</text><text x="270" y="969" fill="#134E4A">action 块 H + state</text>
+    <rect x="356" y="932" width="140" height="48" rx="7" fill="#CCFBF1" stroke="#14B8A6"/>
+    <text x="426" y="951" fill="#134E4A" font-weight="700">MeanStd 归一化</text><text x="426" y="969" fill="#134E4A">ClipAugmenter 同参增强</text>
+    <rect x="512" y="932" width="140" height="48" rx="7" fill="#CCFBF1" stroke="#14B8A6"/>
+    <text x="582" y="951" fill="#134E4A" font-weight="700">messages</text><text x="582" y="969" fill="#134E4A">assistant = GT 子任务</text>
+    <rect x="668" y="932" width="148" height="48" rx="7" fill="#CCFBF1" stroke="#14B8A6"/>
+    <text x="742" y="951" fill="#134E4A" font-weight="700">Processor+Collator</text><text x="742" y="969" fill="#134E4A">labels = span，其余 −100</text>
+  </g>
+  <g stroke="#0D9488" stroke-width="1.8">
+    <line x1="184" y1="956" x2="198" y2="956" marker-end="url(#arr)"/>
+    <line x1="340" y1="956" x2="354" y2="956" marker-end="url(#arr)"/>
+    <line x1="496" y1="956" x2="510" y2="956" marker-end="url(#arr)"/>
+    <line x1="652" y1="956" x2="666" y2="956" marker-end="url(#arr)"/>
+  </g>
+
+  <rect x="44" y="994" width="380" height="168" rx="9" fill="#FFFFFF" stroke="#5EEAD4"/>
+  <text x="58" y="1016" font-size="13.5" font-weight="700" fill="#115E59">Flow Matching（动作头）</text>
+  <g font-size="12.5" fill="#1E293B" font-family="'Cambria Math','STIX Two Math','Times New Roman',serif">
+    <text x="58" y="1040">t ~ Beta(1.5, 1.0),  ε ~ N(0, I)</text>
+    <text x="58" y="1062">a_t = (1 − t)·a + t·ε</text>
+    <text x="58" y="1084">目标速度  v = ε − a</text>
+    <text x="58" y="1106">L_action = masked MSE(v_θ, v)</text>
+  </g>
+  <text x="58" y="1128" font-size="11.5" fill="#475569">先按时间步平均、再按有效维度平均；</text>
+  <text x="58" y="1146" font-size="11.5" fill="#475569">episode 尾部 padding（action_is_pad）被 mask</text>
+
+  <rect x="436" y="994" width="380" height="168" rx="9" fill="#FFFFFF" stroke="#5EEAD4"/>
+  <text x="450" y="1016" font-size="13.5" font-weight="700" fill="#115E59">总损失与优化</text>
+  <g font-size="12.5" fill="#1E293B">
+    <text x="450" y="1040">L = 1.0·L_action + 1.0·L_vl（子任务 CE）</text>
+    <text x="450" y="1062">AdamW β=(0.9, 0.95), wd 1e-8, clip 1.0</text>
+    <text x="450" y="1084">LR：backbone 5e-6 · action_head 5e-5</text>
+    <text x="450" y="1106">warmup 1000 → cosine（min 0.1×）</text>
+    <text x="450" y="1128">DeepSpeed ZeRO-2 · bf16 · grad ckpt · 8 GPU</text>
+  </g>
+  <text x="450" y="1150" font-size="11.5" fill="#475569">保存时复制 meta/stats.json → ckpt/stats.json</text>
+
+  <!-- ===================== Bottom: Inference ===================== -->
+  <g filter="url(#sh)">
+    <rect x="860" y="884" width="810" height="292" rx="14" fill="#EEF2FF" stroke="#4F46E5" stroke-width="2"/>
+  </g>
+  <rect x="860" y="884" width="810" height="36" rx="14" fill="#4F46E5"/>
+  <rect x="860" y="904" width="810" height="16" fill="#4F46E5"/>
+  <text x="1265" y="908" text-anchor="middle" font-size="15.5" font-weight="700" fill="#fff">闭环推理（Receding Horizon + 精确流式预填充）</text>
+
+  <g font-size="11.5" text-anchor="middle">
+    <rect x="876" y="934" width="178" height="54" rx="8" fill="#E0E7FF" stroke="#818CF8"/>
+    <text x="965" y="955" fill="#312E81" font-weight="700">① observe() 帧缓冲</text><text x="965" y="974" fill="#312E81">按 stride 抽历史 + 当前腕部帧</text>
+    <rect x="1074" y="934" width="178" height="54" rx="8" fill="#E0E7FF" stroke="#818CF8"/>
+    <text x="1163" y="955" fill="#312E81" font-weight="700">② Prompt / ViT 特征缓存</text><text x="1163" y="974" fill="#312E81">按 temporal patch 缓存特征</text>
+    <rect x="1272" y="934" width="178" height="54" rx="8" fill="#E0E7FF" stroke="#818CF8"/>
+    <text x="1361" y="955" fill="#312E81" font-weight="700">③ KV 前缀复用</text><text x="1361" y="974" fill="#312E81">执行动作期间后台预填充</text>
+    <rect x="1470" y="934" width="186" height="54" rx="8" fill="#E0E7FF" stroke="#818CF8"/>
+    <text x="1563" y="955" fill="#312E81" font-weight="700">④ 贪心解码 sub-task</text><text x="1563" y="974" fill="#312E81">只剩新 patch + 腕部 + 文本</text>
+
+    <rect x="1470" y="1010" width="186" height="54" rx="8" fill="#E0E7FF" stroke="#818CF8"/>
+    <text x="1563" y="1031" fill="#312E81" font-weight="700">⑤ gather span 条件</text><text x="1563" y="1050" fill="#312E81">同训练的 span mask</text>
+    <rect x="1240" y="1010" width="210" height="54" rx="8" fill="#C7D2FE" stroke="#4F46E5"/>
+    <text x="1345" y="1031" fill="#312E81" font-weight="700">⑥ 10 步 Euler 积分</text><text x="1345" y="1050" fill="#312E81">a ← a − Δt·v_θ(a, t)，t: 1 → 0</text>
+    <rect x="1020" y="1010" width="200" height="54" rx="8" fill="#E0E7FF" stroke="#818CF8"/>
+    <text x="1120" y="1031" fill="#312E81" font-weight="700">⑦ 反归一化动作块</text><text x="1120" y="1050" fill="#312E81">ckpt/stats.json 的 mean/std</text>
+    <rect x="876" y="1010" width="124" height="54" rx="8" fill="#A5B4FC" stroke="#4F46E5"/>
+    <text x="938" y="1031" fill="#1E1B4B" font-weight="700">⑧ 执行前 N 步</text><text x="938" y="1050" fill="#1E1B4B">N=8（LIBERO）</text>
+  </g>
+  <g stroke="#4F46E5" stroke-width="1.8" fill="none">
+    <line x1="1054" y1="961" x2="1072" y2="961" marker-end="url(#arrI)"/>
+    <line x1="1252" y1="961" x2="1270" y2="961" marker-end="url(#arrI)"/>
+    <line x1="1450" y1="961" x2="1468" y2="961" marker-end="url(#arrI)"/>
+    <line x1="1563" y1="988" x2="1563" y2="1008" marker-end="url(#arrI)"/>
+    <line x1="1470" y1="1037" x2="1452" y2="1037" marker-end="url(#arrI)"/>
+    <line x1="1240" y1="1037" x2="1222" y2="1037" marker-end="url(#arrI)"/>
+    <line x1="1020" y1="1037" x2="1002" y2="1037" marker-end="url(#arrI)"/>
+    <path d="M876,1037 L866,1037 L866,961 L874,961" stroke-dasharray="5,3" marker-end="url(#arrI)"/>
+  </g>
+  <text x="878" y="1000" font-size="10.5" fill="#4338CA">新观测 → 重新决策</text>
+
+  <rect x="876" y="1078" width="780" height="86" rx="9" fill="#FFFFFF" stroke="#A5B4FC"/>
+  <g font-size="12" fill="#1E293B">
+    <text x="890" y="1100">• Checkpoint 的 config.json 持久化相机 / 窗口 / fps / robot_tag / 控制频率等 → 推理端逐字节重建 prompt 与预处理</text>
+    <text x="890" y="1121">• BatchedEvalPolicy：多环境组批 prefill + 解码；PipelinedKVRunner：上一窗口的 KV 前缀在机器人执行时预先算好</text>
+    <text x="890" y="1142">• 流式结果与完整重算逐字节一致；60 s 历史决策延迟 1.02 s → 0.68 s（H100, bf16, batch 1）</text>
+  </g>
+  <text x="890" y="1159" font-size="10.5" fill="#6366F1">libero_sim/policy.py · batched_policy.py · pipelined_policy.py · eval_success.py</text>
+</svg>

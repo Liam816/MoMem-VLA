@@ -337,6 +337,7 @@ class DiTActionHead(nn.Module):
         condition_position_ids: torch.Tensor,
         condition_attention_mask: torch.Tensor,
         has_state: bool = False,
+        num_memory_tokens: int = 0,
     ) -> torch.Tensor:
         batch_size = condition_hidden_states.shape[0]
         device = condition_hidden_states.device
@@ -351,6 +352,15 @@ class DiTActionHead(nn.Module):
         action_start = masked_positions.amax(dim=(0, 2)).clamp_min(0) + 1
 
         pieces = [condition_position_ids]
+        if num_memory_tokens:
+            memory_offsets = torch.arange(
+                num_memory_tokens, device=device, dtype=condition_position_ids.dtype
+            )
+            memory_position_ids = action_start.view(1, batch_size, 1) + memory_offsets.view(
+                1, 1, num_memory_tokens
+            )
+            pieces.append(memory_position_ids.expand(3, -1, -1))
+            action_start = action_start + num_memory_tokens
         if has_state:
             state_position_ids = action_start.view(1, batch_size, 1).expand(3, -1, -1)
             pieces.append(state_position_ids)
@@ -379,7 +389,11 @@ class DiTActionHead(nn.Module):
         condition_attention_mask: torch.Tensor,
         condition_token_embeds: torch.Tensor | None = None,
         state: torch.Tensor | None = None,
+        memory_cond: torch.Tensor | None = None,
+        memory_tokens: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """``memory_cond (B, hidden)`` is added to the adaLN time condition;
+        ``memory_tokens (B, M, hidden)`` are inserted after the condition tokens."""
         batch_size, horizon, _ = noisy_actions.shape
 
         condition_tokens = F.normalize(
@@ -394,6 +408,19 @@ class DiTActionHead(nn.Module):
         valid_condition = condition_attention_mask.to(dtype=torch.bool)
         tokens = [condition_tokens]
         masks = [valid_condition]
+
+        num_memory_tokens = 0
+        if memory_tokens is not None:
+            num_memory_tokens = memory_tokens.shape[1]
+            tokens.append(memory_tokens.to(dtype=condition_tokens.dtype))
+            masks.append(
+                torch.ones(
+                    batch_size,
+                    num_memory_tokens,
+                    dtype=torch.bool,
+                    device=valid_condition.device,
+                )
+            )
 
         use_state = self.use_proprio and state is not None
         if use_state:
@@ -427,8 +454,11 @@ class DiTActionHead(nn.Module):
             condition_attention_mask=condition_attention_mask,
             condition_position_ids=condition_position_ids,
             has_state=use_state,
+            num_memory_tokens=num_memory_tokens,
         )
         time_emb = self.time_embed(timesteps)
+        if memory_cond is not None:
+            time_emb = time_emb + memory_cond.to(dtype=time_emb.dtype)
         for block in self.blocks:
             x = block(
                 x,
@@ -449,6 +479,8 @@ class DiTActionHead(nn.Module):
         temperature: float = 1.0,
         condition_token_embeds: torch.Tensor | None = None,
         state: torch.Tensor | None = None,
+        memory_cond: torch.Tensor | None = None,
+        memory_tokens: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if num_steps <= 0:
             raise ValueError("num_steps must be positive")
@@ -479,6 +511,8 @@ class DiTActionHead(nn.Module):
                 condition_position_ids=condition_position_ids,
                 condition_token_embeds=condition_token_embeds,
                 state=state,
+                memory_cond=memory_cond,
+                memory_tokens=memory_tokens,
             )
             actions = actions - dt * velocity
         return actions

@@ -37,6 +37,24 @@ class SimpleMemVLAConfig(PretrainedConfig):
         history_image_keys: list[str] | None = None,
         subtask_key: str = "subtask",
         subtask_index_key: str = "subtask_index",
+        condition_source: str = "subtask",
+        single_frame: bool = False,
+        use_memory: bool = False,
+        mem_feature_dim: int | None = None,
+        mem_feature_type: str = "vit_merger",
+        mem_camera_key: str | None = None,
+        mem_window_sec: float = 60.0,
+        mem_fps: float = 2.0,
+        mem_frame_pool: int = 4,
+        mem_hidden_size: int = 1024,
+        mem_depth: int = 4,
+        mem_num_heads: int = 16,
+        mem_mlp_ratio: float = 4.0,
+        mem_num_queries: int = 16,
+        mem_compressor_depth: int = 2,
+        mem_fusion: str = "adaln_add",
+        mem_dropout: float = 0.0,
+        mem_dropout_prob: float = 0.0,
         backbone_config: dict | None = None,
         **kwargs,
     ):
@@ -75,4 +93,26 @@ class SimpleMemVLAConfig(PretrainedConfig):
         )
         self.subtask_key = subtask_key
         self.subtask_index_key = subtask_index_key
+        if condition_source not in ("subtask", "prompt"):
+            raise ValueError(
+                f"condition_source must be 'subtask' or 'prompt', got {condition_source!r}"
+            )
+        self.condition_source = condition_source
+        self.single_frame = single_frame
+        self.use_memory = use_memory
+        self.mem_feature_dim = mem_feature_dim
+        self.mem_feature_type = mem_feature_type
+        self.mem_camera_key = mem_camera_key
+        self.mem_window_sec = mem_window_sec
+        self.mem_fps = mem_fps
+        self.mem_frame_pool = mem_frame_pool
+        self.mem_hidden_size = mem_hidden_size
+        self.mem_depth = mem_depth
+        self.mem_num_heads = mem_num_heads
+        self.mem_mlp_ratio = mem_mlp_ratio
+        self.mem_num_queries = mem_num_queries
+        self.mem_compressor_depth = mem_compressor_depth
+        self.mem_fusion = mem_fusion
+        self.mem_dropout = mem_dropout
+        self.mem_dropout_prob = mem_dropout_prob
         self.backbone_config = backbone_config

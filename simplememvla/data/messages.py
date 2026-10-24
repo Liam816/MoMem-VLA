@@ -70,6 +70,60 @@ def build_embodiment_prompt(
     )
 
 
+def build_single_frame_prompt(
+    instruction: str,
+    robot_tag: str,
+    control_frequency_hz: int,
+    action_horizon: int,
+    num_cameras: int,
+) -> str:
+    instruction = instruction.strip().replace("_", " ").rstrip(". ")
+    if not instruction:
+        raise ValueError("instruction must be a non-empty string")
+    cameras_clause = (
+        f"You are given the current image from {num_cameras} cameras. "
+        if num_cameras > 1
+        else "You are given the current image from one camera. "
+    )
+    return (
+        f"The robot is a {robot_tag}. "
+        f"The control frequency is {control_frequency_hz} Hz. "
+        f"{cameras_clause}"
+        f"The overall task is: {instruction}. "
+        f"Predict the next {action_horizon} control actions."
+    )
+
+
+def build_single_frame_messages(
+    camera_tags: list[str],
+    instruction: str,
+    robot_tag: str,
+    control_frequency_hz: int,
+    action_horizon: int,
+    camera_labels: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Current-frame-only prompt with no assistant turn (``condition_source='prompt'``)."""
+    content: list[dict[str, Any]] = []
+    for tag in camera_tags:
+        content.append(
+            {"type": "text", "text": f"{resolve_camera_label(tag, camera_labels)}:"}
+        )
+        content.append({"type": "image"})
+    content.append(
+        {
+            "type": "text",
+            "text": build_single_frame_prompt(
+                instruction=instruction,
+                robot_tag=robot_tag,
+                control_frequency_hz=control_frequency_hz,
+                action_horizon=action_horizon,
+                num_cameras=len(camera_tags),
+            ),
+        }
+    )
+    return [{"role": "user", "content": content}]
+
+
 def build_simplememvla_messages(
     camera_tags: list[str],
     instruction: str,

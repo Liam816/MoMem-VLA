@@ -1,3 +1,5 @@
+import json
+import os
 from dataclasses import dataclass
 
 import torch
@@ -11,6 +13,9 @@ from transformers.utils import ModelOutput
 
 from simplememvla.model.configuration_simplememvla import SimpleMemVLAConfig
 from simplememvla.model.dit_action_head import DiTActionHead
+from simplememvla.model.memory import VisionTokenMemory
+
+MEMORY_MODES = ("normal", "zero", "shuffle")
 
 
 @dataclass
@@ -19,6 +24,21 @@ class SimpleMemVLAOutput(ModelOutput):
     action_loss: torch.Tensor | None = None
     vl_loss: torch.Tensor | None = None
     pred_velocity: torch.Tensor | None = None
+    mem_norm: torch.Tensor | None = None
+
+
+def load_checkpoint_state_dict(checkpoint: str) -> dict[str, torch.Tensor]:
+    from safetensors.torch import load_file
+
+    index_path = os.path.join(checkpoint, "model.safetensors.index.json")
+    if os.path.isfile(index_path):
+        with open(index_path, "r") as f:
+            weight_map = json.load(f)["weight_map"]
+        state_dict: dict[str, torch.Tensor] = {}
+        for shard in sorted(set(weight_map.values())):
+            state_dict.update(load_file(os.path.join(checkpoint, shard)))
+        return state_dict
+    return load_file(os.path.join(checkpoint, "model.safetensors"))
 
 
 def sample_flow_timesteps(
@@ -110,6 +130,23 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             state_dim=config.state_dim,
             state_dropout_prob=config.state_dropout_prob,
         )
+        self.memory = None
+        if config.use_memory:
+            if config.mem_feature_dim is None:
+                config.mem_feature_dim = self.backbone.config.vision_config.out_hidden_size
+            self.memory = VisionTokenMemory(
+                feature_dim=config.mem_feature_dim,
+                cond_dim=config.dit_hidden_size,
+                tokens_per_frame=config.mem_frame_pool**2,
+                hidden_size=config.mem_hidden_size,
+                depth=config.mem_depth,
+                num_heads=config.mem_num_heads,
+                mlp_ratio=config.mem_mlp_ratio,
+                num_queries=config.mem_num_queries,
+                compressor_depth=config.mem_compressor_depth,
+                fusion=config.mem_fusion,
+                dropout=config.mem_dropout,
+            )
         self._apply_backbone_freeze(config.freeze_backbone)
         for module in self.modules():
             module._is_hf_initialized = True
@@ -143,6 +180,80 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         target_dtype = backbone.dtype if dtype is not None else None
         if target_dtype is not None:
             model.action_head.to(dtype=target_dtype)
+            if model.memory is not None:
+                model.memory.to(dtype=target_dtype)
+        return model
+
+    @classmethod
+    def from_simplememvla_checkpoint(
+        cls,
+        checkpoint: str,
+        config: SimpleMemVLAConfig,
+        dtype: torch.dtype = torch.bfloat16,
+        attn_implementation: str | None = None,
+    ) -> "SimpleMemVLAForActionPrediction":
+        """Warm start from a released SimpleMemVLA checkpoint (backbone + DiT).
+
+        ``config`` describes the new model; only modules absent from the
+        checkpoint (``memory.*``) may be left at their fresh initialisation.
+        """
+        ckpt_config = SimpleMemVLAConfig.from_pretrained(checkpoint)
+        for key in ("action_dim", "action_horizon", "state_dim", "use_proprio"):
+            if getattr(ckpt_config, key) != getattr(config, key):
+                raise ValueError(
+                    f"{key}={getattr(config, key)!r} does not match checkpoint "
+                    f"{checkpoint} ({getattr(ckpt_config, key)!r})"
+                )
+        for key in (
+            "dit_hidden_size",
+            "dit_depth",
+            "dit_num_heads",
+            "dit_mlp_ratio",
+            "dit_rope_theta",
+            "dit_mrope_section",
+            "dit_partial_rotary_factor",
+        ):
+            setattr(config, key, getattr(ckpt_config, key))
+        config.backbone_config = dict(ckpt_config.backbone_config)
+        backbone_config = AutoConfig.for_model(**config.backbone_config)
+        from_config_kwargs = {}
+        if attn_implementation:
+            from_config_kwargs["attn_implementation"] = attn_implementation
+        backbone = AutoModelForImageTextToText.from_config(
+            backbone_config, **from_config_kwargs
+        )
+        for param in backbone.parameters():
+            param.data = param.data.to(dtype)
+        model = cls(config=config, backbone=backbone)
+        state_dict = load_checkpoint_state_dict(checkpoint)
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        del state_dict
+        if any(key.endswith("lm_head.weight") for key in missing):
+            model.backbone.tie_weights()
+            missing = [key for key in missing if not key.endswith("lm_head.weight")]
+        bad_missing = [key for key in missing if not key.startswith("memory.")]
+        if bad_missing or unexpected:
+            raise RuntimeError(
+                f"Checkpoint weight mismatch loading {checkpoint}: "
+                f"missing={bad_missing[:8]} unexpected={unexpected[:8]}"
+            )
+        if model.memory is not None:
+            fresh = {f"memory.{name}" for name, _ in model.memory.named_parameters()}
+            if not fresh.issubset(set(missing)):
+                raise RuntimeError("checkpoint unexpectedly carries memory.* weights")
+        model.action_head.to(dtype=dtype)
+        if model.memory is not None:
+            model.memory.to(dtype=dtype)
+        demoted = [
+            name
+            for name, buf in model.backbone.named_buffers()
+            if "inv_freq" in name and buf.dtype != torch.float32
+        ]
+        if demoted:
+            raise RuntimeError(
+                "backbone rotary inv_freq buffers must stay fp32 to reproduce the "
+                f"trained M-RoPE phases; got {demoted[:4]}"
+            )
         return model
 
     def _apply_backbone_freeze(self, freeze: bool) -> None:
@@ -251,6 +362,52 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             cond_pos[:, b, :n] = position_ids[:, b, idx]
         return cond_hidden, cond_token, cond_mask, cond_pos
 
+    def _memory_condition(
+        self,
+        mem_feats: torch.Tensor | None,
+        mem_age: torch.Tensor | None,
+        mem_mask: torch.Tensor | None,
+        device: torch.device,
+        mem_mode: str = "normal",
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Returns ``(memory_cond, memory_tokens)`` for the action head."""
+        if mem_mode not in MEMORY_MODES:
+            raise ValueError(f"mem_mode must be one of {MEMORY_MODES}, got {mem_mode!r}")
+        if self.memory is None or mem_mode == "zero":
+            return None, None
+        if mem_feats is None or mem_age is None or mem_mask is None:
+            raise ValueError("use_memory=True requires mem_feats, mem_age and mem_mask")
+        mem_feats = mem_feats.to(device=device)
+        mem_age = mem_age.to(device=device)
+        mem_mask = mem_mask.to(device=device)
+        if mem_mode == "shuffle":
+            mem_feats, mem_age, mem_mask = (
+                t.roll(1, dims=0) for t in (mem_feats, mem_age, mem_mask)
+            )
+        out = self.memory(mem_feats, mem_age, mem_mask)
+        if self.training and self.config.mem_dropout_prob > 0.0:
+            keep = torch.rand(out.shape[0], device=device) >= self.config.mem_dropout_prob
+            out = out * keep.to(dtype=out.dtype).view(-1, *([1] * (out.ndim - 1)))
+        if self.config.mem_fusion == "adaln_add":
+            return out, None
+        return None, out
+
+    def _condition_span(
+        self,
+        labels: torch.Tensor | None,
+        condition_span: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if self.config.condition_source == "prompt":
+            if condition_span is None:
+                raise ValueError("condition_source='prompt' requires condition_span")
+            return condition_span
+        if labels is None:
+            raise ValueError(
+                "labels (the supervised sub-task span) are required to train "
+                "the action head"
+            )
+        return labels.ne(-100)
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -260,6 +417,13 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         action_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
         state: torch.Tensor | None = None,
+        condition_span: torch.Tensor | None = None,
+        mem_feats: torch.Tensor | None = None,
+        mem_age: torch.Tensor | None = None,
+        mem_mask: torch.Tensor | None = None,
+        noise: torch.Tensor | None = None,
+        timesteps: torch.Tensor | None = None,
+        mem_mode: str = "normal",
         **kwargs,
     ) -> SimpleMemVLAOutput:
         if position_ids is None:
@@ -275,29 +439,35 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         action_loss = None
         pred_velocity = None
         total_loss = None
+        mem_norm = None
         if actions is not None:
             actions = actions.to(device=hidden_states.device, dtype=hidden_states.dtype)
             batch_size = actions.shape[0]
-            noise = torch.randn_like(actions)
-            timesteps = sample_flow_timesteps(
-                batch_size,
-                device=actions.device,
-                dtype=actions.dtype,
-                beta_alpha=self.config.timestep_beta_alpha,
-                beta_beta=self.config.timestep_beta_beta,
-            )
+            if noise is None:
+                noise = torch.randn_like(actions)
+            noise = noise.to(device=actions.device, dtype=actions.dtype)
+            if timesteps is None:
+                timesteps = sample_flow_timesteps(
+                    batch_size,
+                    device=actions.device,
+                    dtype=actions.dtype,
+                    beta_alpha=self.config.timestep_beta_alpha,
+                    beta_beta=self.config.timestep_beta_beta,
+                )
+            timesteps = timesteps.to(device=actions.device, dtype=actions.dtype)
             t_view = timesteps.view(batch_size, 1, 1)
             noisy_actions = (1 - t_view) * actions + t_view * noise
             target_velocity = noise - actions
             if action_mask is None:
                 raise ValueError("action_mask is required when training on actions")
             action_mask = action_mask.to(device=actions.device)
-            if labels is None:
-                raise ValueError(
-                    "labels (the supervised sub-task span) are required to train "
-                    "the action head"
-                )
-            span = labels.ne(-100)
+            span = self._condition_span(labels, condition_span)
+            memory_cond, memory_tokens = self._memory_condition(
+                mem_feats, mem_age, mem_mask, hidden_states.device, mem_mode
+            )
+            mem_out = memory_cond if memory_cond is not None else memory_tokens
+            if mem_out is not None:
+                mem_norm = mem_out.detach().float().flatten(1).norm(dim=-1).mean()
             cond_hidden, cond_token, cond_mask, cond_pos = self._gather_condition(
                 hidden_states=hidden_states,
                 input_ids=input_ids,
@@ -313,6 +483,8 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                 condition_position_ids=cond_pos,
                 condition_attention_mask=cond_mask,
                 state=state,
+                memory_cond=memory_cond,
+                memory_tokens=memory_tokens,
             )
             action_loss = masked_flow_matching_loss(
                 pred_velocity=pred_velocity,
@@ -330,6 +502,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             action_loss=action_loss,
             vl_loss=vl_loss,
             pred_velocity=pred_velocity,
+            mem_norm=mem_norm,
         )
 
     @torch.no_grad()
@@ -342,6 +515,10 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         num_steps: int = 10,
         temperature: float = 1.0,
         state: torch.Tensor | None = None,
+        mem_feats: torch.Tensor | None = None,
+        mem_age: torch.Tensor | None = None,
+        mem_mask: torch.Tensor | None = None,
+        mem_mode: str = "normal",
         **kwargs,
     ) -> torch.Tensor:
         if position_ids is None:
@@ -359,6 +536,9 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
         )
+        memory_cond, memory_tokens = self._memory_condition(
+            mem_feats, mem_age, mem_mask, hidden_states.device, mem_mode
+        )
         return self.action_head.sample(
             cond_hidden,
             condition_position_ids=cond_pos,
@@ -367,6 +547,8 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             num_steps=num_steps,
             temperature=temperature,
             state=state,
+            memory_cond=memory_cond,
+            memory_tokens=memory_tokens,
         )
 
     @torch.no_grad()

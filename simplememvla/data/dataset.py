@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pyarrow as pa
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from transformers.video_utils import VideoMetadata
 
@@ -15,10 +17,56 @@ from simplememvla.benchmarks import BenchmarkSpec
 from simplememvla.data.augment import ClipAugmenter
 from simplememvla.data.messages import (
     build_simplememvla_messages,
+    build_single_frame_messages,
     derive_video_sampling,
     variable_history_frames,
 )
-from simplememvla.data.normalize import MeanStdNormalizer, load_action_stats, load_state_stats
+from simplememvla.data.normalize import (
+    MeanStdNormalizer,
+    load_action_stats,
+    load_state_stats,
+    load_stats_file,
+)
+
+MEM_META_FILE = "meta.json"
+
+
+def mem_keyframe_stride(native_fps: float, mem_fps: float) -> int:
+    return max(1, round(native_fps / mem_fps))
+
+
+def mem_episode_path(feature_dir: str | Path, episode_index: int) -> Path:
+    return Path(feature_dir) / f"episode_{int(episode_index):06d}.npy"
+
+
+def select_mem_keyframes(
+    frame_index: int, stride: int, window_frames: int, num_keyframes: int
+) -> tuple[int, int]:
+    """Keyframes ``k`` (frame ``k * stride``) with ``t - window < k * stride <= t``.
+
+    Shared by training and rollout so both see the same cache.
+    """
+    k_max = min(frame_index // stride, num_keyframes - 1)
+    k_min = max(0, (frame_index - window_frames) // stride + 1)
+    if k_max < k_min:
+        raise ValueError(
+            f"no memory keyframe for frame {frame_index} (stride={stride}, "
+            f"window={window_frames}, stored={num_keyframes})"
+        )
+    return k_min, k_max
+
+
+def pool_mem_tokens(feats: torch.Tensor, grid: tuple[int, int], pool: int) -> torch.Tensor:
+    """``(K, gh*gw, D)`` -> ``(K, pool*pool, D)`` by 2-D average pooling per frame."""
+    num_frames, num_tokens, dim = feats.shape
+    grid_h, grid_w = grid
+    if num_tokens != grid_h * grid_w:
+        raise ValueError(f"{num_tokens} tokens/frame do not match grid {grid}")
+    if (grid_h, grid_w) == (pool, pool):
+        return feats
+    x = feats.float().view(num_frames, grid_h, grid_w, dim).permute(0, 3, 1, 2)
+    x = F.adaptive_avg_pool2d(x, (pool, pool))
+    return x.flatten(2).transpose(1, 2).to(dtype=feats.dtype)
 
 
 def _frames_to_video(value: Any) -> np.ndarray:
@@ -68,9 +116,23 @@ def _flat_bool_column(hf_dataset, name: str) -> np.ndarray:
 
 class SimpleMemVLADataset(Dataset):
 
-    def __init__(self, data_args, spec: BenchmarkSpec):
+    def __init__(
+        self,
+        data_args,
+        spec: BenchmarkSpec,
+        condition_source: str = "subtask",
+        mem_frame_pool: int | None = None,
+    ):
         self.data_args = data_args
         self.spec = spec
+        self.single_frame = bool(getattr(data_args, "single_frame", False))
+        self.condition_source = condition_source
+        if self.single_frame != (condition_source == "prompt"):
+            raise NotImplementedError(
+                "single_frame=True is implemented together with condition_source="
+                "'prompt' (and the history-video recipe with 'subtask'); got "
+                f"single_frame={self.single_frame}, condition_source={condition_source!r}"
+            )
         self.root = Path(data_args.root)
         self.ds_meta = LeRobotDatasetMetadata(
             data_args.repo_id,
@@ -89,11 +151,13 @@ class SimpleMemVLADataset(Dataset):
         )
         self.variable_history = bool(data_args.variable_history)
         requested_history = data_args.history_image_keys
-        if requested_history is None:
+        if self.single_frame:
+            self.history_image_keys = []
+        elif requested_history is None:
             self.history_image_keys = list(data_args.image_keys)
         else:
             self.history_image_keys = list(requested_history)
-        if not self.history_image_keys:
+        if not self.history_image_keys and not self.single_frame:
             raise ValueError("history_image_keys must name at least one camera")
         unknown = [
             k for k in self.history_image_keys if k not in data_args.image_keys
@@ -103,7 +167,7 @@ class SimpleMemVLADataset(Dataset):
                 f"history_image_keys {unknown} not among image_keys "
                 f"{data_args.image_keys}"
             )
-        offsets = _history_offsets(self.n_frames, self.stride)
+        offsets = [0] if self.single_frame else _history_offsets(self.n_frames, self.stride)
         delta_timestamps = _resolve_delta_timestamps(
             data_args, self.ds_meta, offsets, self.history_image_keys
         )
@@ -116,10 +180,16 @@ class SimpleMemVLADataset(Dataset):
             download_videos=data_args.download_videos,
             video_backend=data_args.video_backend,
         )
-        self.action_stats = load_action_stats(self.root)
+        self.stats_path = getattr(data_args, "stats_path", None)
+        if self.stats_path:
+            self.action_stats = load_stats_file(self.stats_path, "action")
+            self.state_stats = load_stats_file(self.stats_path, "observation.state")
+        else:
+            self.action_stats = load_action_stats(self.root)
+            self.state_stats = load_state_stats(self.root)
         self.normalizer = MeanStdNormalizer(self.action_stats)
-        self.state_stats = load_state_stats(self.root)
         self.state_normalizer = MeanStdNormalizer(self.state_stats)
+        self._init_memory(data_args, mem_frame_pool)
         self._anchor_indices: np.ndarray | None = None
         skip_demo = bool(getattr(data_args, "skip_video_demo_frames", False))
         if skip_demo:
@@ -184,6 +254,57 @@ class SimpleMemVLADataset(Dataset):
             key.split(".")[-1] for key in self.history_image_keys
         ]
         self.augmenter = ClipAugmenter() if data_args.image_aug else None
+
+    def _init_memory(self, data_args, mem_frame_pool: int | None) -> None:
+        self.mem_feature_dir = getattr(data_args, "mem_feature_dir", None)
+        self._mem_arrays: dict[int, np.ndarray] = {}
+        if not self.mem_feature_dir:
+            return
+        if mem_frame_pool is None:
+            raise ValueError("mem_feature_dir is set but mem_frame_pool is not")
+        meta_path = Path(self.mem_feature_dir) / MEM_META_FILE
+        with meta_path.open("r") as f:
+            self.mem_meta = json.load(f)
+        self.mem_stride = mem_keyframe_stride(self.native_fps, data_args.mem_fps)
+        if int(self.mem_meta["stride"]) != self.mem_stride:
+            raise ValueError(
+                f"{meta_path} was extracted with stride {self.mem_meta['stride']}, but "
+                f"mem_fps={data_args.mem_fps} at {self.native_fps} fps needs "
+                f"{self.mem_stride}"
+            )
+        if self.mem_meta["camera_key"] not in self.data_args.image_keys:
+            raise ValueError(
+                f"memory camera {self.mem_meta['camera_key']!r} is not among image_keys"
+            )
+        self.mem_window_frames = round(data_args.mem_window_sec * self.native_fps)
+        self.mem_grid = tuple(int(v) for v in self.mem_meta["grid"])
+        self.mem_frame_pool = int(mem_frame_pool)
+
+    def _mem_array(self, episode_index: int) -> np.ndarray:
+        arr = self._mem_arrays.get(episode_index)
+        if arr is None:
+            path = mem_episode_path(self.mem_feature_dir, episode_index)
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Missing memory features {path}; run scripts/extract_mem_features.py "
+                    "for this episode."
+                )
+            arr = np.load(path, mmap_mode="r")
+            self._mem_arrays[episode_index] = arr
+        return arr
+
+    def _get_memory(self, item: dict[str, Any]) -> dict[str, torch.Tensor]:
+        episode_index = int(torch.as_tensor(item["episode_index"]).reshape(-1)[0])
+        frame_index = int(torch.as_tensor(item["frame_index"]).reshape(-1)[0])
+        arr = self._mem_array(episode_index)
+        k_min, k_max = select_mem_keyframes(
+            frame_index, self.mem_stride, self.mem_window_frames, arr.shape[0]
+        )
+        feats = torch.from_numpy(np.array(arr[k_min : k_max + 1]))
+        feats = pool_mem_tokens(feats, self.mem_grid, self.mem_frame_pool)
+        keyframes = torch.arange(k_min, k_max + 1, dtype=torch.float32) * self.mem_stride
+        age = (frame_index - keyframes) / self.native_fps
+        return {"mem_feats": feats, "mem_age": age}
 
     def __len__(self):
         if self._anchor_indices is not None:
@@ -323,17 +444,27 @@ class SimpleMemVLADataset(Dataset):
             params = self.augmenter.draw()
             videos = [self.augmenter.apply(clip, params) for clip in videos]
             images = [self.augmenter.apply(img, params) for img in images]
-        messages = build_simplememvla_messages(
-            camera_tags=self.camera_tags,
-            instruction=self._get_task(item),
-            robot_tag=self.data_args.robot_tag,
-            control_frequency_hz=self.control_frequency_hz,
-            action_horizon=self.spec.num_actions_chunk,
-            camera_labels=self.spec.camera_labels,
-            subtask=self._get_subtask(item),
-            history_camera_tags=self.history_camera_tags,
-        )
-        return {
+        if self.condition_source == "prompt":
+            messages = build_single_frame_messages(
+                camera_tags=self.camera_tags,
+                instruction=self._get_task(item),
+                robot_tag=self.data_args.robot_tag,
+                control_frequency_hz=self.control_frequency_hz,
+                action_horizon=self.spec.num_actions_chunk,
+                camera_labels=self.spec.camera_labels,
+            )
+        else:
+            messages = build_simplememvla_messages(
+                camera_tags=self.camera_tags,
+                instruction=self._get_task(item),
+                robot_tag=self.data_args.robot_tag,
+                control_frequency_hz=self.control_frequency_hz,
+                action_horizon=self.spec.num_actions_chunk,
+                camera_labels=self.spec.camera_labels,
+                subtask=self._get_subtask(item),
+                history_camera_tags=self.history_camera_tags,
+            )
+        sample = {
             "messages": messages,
             "videos": videos,
             "video_metadata": video_metadata,
@@ -342,3 +473,6 @@ class SimpleMemVLADataset(Dataset):
             "action_mask": action_mask,
             "state": state,
         }
+        if self.mem_feature_dir:
+            sample.update(self._get_memory(item))
+        return sample

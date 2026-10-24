@@ -29,6 +29,27 @@ class ModelArguments:
     use_proprio: bool = field(default=True)
     state_dropout_prob: float = field(default=0.0)
 
+    init_from_checkpoint: Optional[str] = field(
+        default=None,
+        metadata={"help": "Released SimpleMemVLA checkpoint to warm start backbone + DiT from"},
+    )
+    condition_source: str = field(
+        default="subtask",
+        metadata={"help": "subtask: GT sub-task span (baseline); prompt: whole single-frame prompt"},
+    )
+
+    use_memory: bool = field(default=False)
+    mem_hidden_size: int = field(default=1024)
+    mem_depth: int = field(default=4)
+    mem_num_heads: int = field(default=16)
+    mem_mlp_ratio: float = field(default=4.0)
+    mem_num_queries: int = field(default=16)
+    mem_compressor_depth: int = field(default=2)
+    mem_frame_pool: int = field(default=4)
+    mem_fusion: str = field(default="adaln_add", metadata={"help": "adaln_add | prefix_tokens"})
+    mem_dropout: float = field(default=0.0)
+    mem_dropout_prob: float = field(default=0.0)
+
 
 @dataclass
 class DataArguments:
@@ -66,6 +87,23 @@ class DataArguments:
     control_frequency_hz: Optional[int] = field(default=None)
     action_delta_indices: Optional[list[int]] = field(default=None)
 
+    episodes_file: Optional[str] = field(
+        default=None, metadata={"help": "Text file of training episode indices (overrides --episodes)"}
+    )
+    val_episodes_file: Optional[str] = field(
+        default=None, metadata={"help": "Text file of held-out episode indices for eval"}
+    )
+    stats_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "stats.json used for action/state normalisation (default <root>/meta)"},
+    )
+    single_frame: bool = field(
+        default=False, metadata={"help": "Feed every camera as a single current image (no history video)"}
+    )
+    mem_feature_dir: Optional[str] = field(default=None)
+    mem_window_sec: float = field(default=60.0)
+    mem_fps: float = field(default=2.0)
+
 
 @dataclass
 class SFTTrainingArguments(TrainingArguments):
@@ -91,6 +129,10 @@ class SFTTrainingArguments(TrainingArguments):
 
     backbone_lr: float = field(default=5e-6)
     action_head_lr: float = field(default=5e-5)
+    memory_lr: float = field(default=1e-4)
+    eval_max_batches: int = field(
+        default=50, metadata={"help": "Batches per rank in each memory-diagnostic eval"}
+    )
     weight_decay: float = field(default=1e-8)
     warmup_steps: int = field(default=1000)
     lr_scheduler_type: str = field(default="cosine_with_min_lr")

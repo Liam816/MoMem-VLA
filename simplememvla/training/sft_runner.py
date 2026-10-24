@@ -15,6 +15,8 @@ class TrainRunner:
         resume_from_checkpoint=False,
         processor=None,
         data_root=None,
+        eval_dataset=None,
+        stats_path=None,
     ):
         self.model = model
         self.training_args = training_args
@@ -31,9 +33,11 @@ class TrainRunner:
             model=model,
             args=training_args,
             train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             data_collator=data_collator,
             processing_class=processor,
             data_root=data_root,
+            stats_path=stats_path,
         )
 
     def train(self):

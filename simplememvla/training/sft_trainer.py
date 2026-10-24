@@ -8,6 +8,8 @@ from torch.utils.data import Dataset, Sampler
 from transformers import Trainer
 from transformers.trainer import get_last_checkpoint
 
+from simplememvla.model.modeling_simplememvla import sample_flow_timesteps
+
 
 def _permit_trusted_torch_load() -> None:
     from transformers.utils import import_utils
@@ -67,12 +69,28 @@ class EpochAwareSampler(Sampler):
             self.data_source.set_epoch(epoch)
 
 
+def _param_module(name: str) -> str:
+    parts = name.split(".")
+    if "memory" in parts[:2]:
+        return "memory"
+    if "action_head" in name:
+        return "action_head"
+    return "backbone"
+
+
 class SimpleMemVLATrainer(Trainer):
-    def __init__(self, *args, data_root: str | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        data_root: str | None = None,
+        stats_path: str | None = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.model_accepts_loss_kwargs = False
         self.data_root = data_root
-        self._metric_sums = {"action_loss": 0.0, "vl_loss": 0.0}
+        self.stats_path = stats_path
+        self._metric_sums = {"action_loss": 0.0, "vl_loss": 0.0, "mem_norm": 0.0}
         self._metric_count = 0
 
     def _get_train_sampler(self, train_dataset=None):
@@ -82,7 +100,9 @@ class SimpleMemVLATrainer(Trainer):
         return EpochAwareSampler(train_dataset, shuffle=True, seed=self.args.seed)
 
     def _get_eval_sampler(self, eval_dataset):
-        return EpochAwareSampler(eval_dataset, shuffle=False, seed=self.args.seed)
+        # Fixed shuffled order: eval_max_batches then covers every held-out
+        # episode instead of the first few, and is identical across evals.
+        return EpochAwareSampler(eval_dataset, shuffle=True, seed=self.args.seed)
 
     def create_optimizer(self):
         if self.optimizer is not None:
@@ -90,44 +110,28 @@ class SimpleMemVLATrainer(Trainer):
 
         opt_model = self.model_wrapped if hasattr(self, "model_wrapped") else self.model
         decay_names = self.get_decay_parameter_names(opt_model)
-        grouped = [
-            {
-                "params": [
-                    p
-                    for n, p in opt_model.named_parameters()
-                    if p.requires_grad and "action_head" not in n and n in decay_names
-                ],
-                "weight_decay": self.args.weight_decay,
-                "lr": self.args.backbone_lr,
-            },
-            {
-                "params": [
-                    p
-                    for n, p in opt_model.named_parameters()
-                    if p.requires_grad and "action_head" not in n and n not in decay_names
-                ],
-                "weight_decay": 0.0,
-                "lr": self.args.backbone_lr,
-            },
-            {
-                "params": [
-                    p
-                    for n, p in opt_model.named_parameters()
-                    if p.requires_grad and "action_head" in n and n in decay_names
-                ],
-                "weight_decay": self.args.weight_decay,
-                "lr": self.args.action_head_lr,
-            },
-            {
-                "params": [
-                    p
-                    for n, p in opt_model.named_parameters()
-                    if p.requires_grad and "action_head" in n and n not in decay_names
-                ],
-                "weight_decay": 0.0,
-                "lr": self.args.action_head_lr,
-            },
-        ]
+        module_lrs = {
+            "backbone": self.args.backbone_lr,
+            "action_head": self.args.action_head_lr,
+            "memory": self.args.memory_lr,
+        }
+        grouped = []
+        for module, lr in module_lrs.items():
+            for decay in (True, False):
+                grouped.append(
+                    {
+                        "params": [
+                            p
+                            for n, p in opt_model.named_parameters()
+                            if p.requires_grad
+                            and _param_module(n) == module
+                            and (n in decay_names) == decay
+                        ],
+                        "weight_decay": self.args.weight_decay if decay else 0.0,
+                        "lr": lr,
+                        "name": module,
+                    }
+                )
         grouped = [group for group in grouped if len(group["params"]) > 0]
         self._check_zero_partition_overflow(grouped)
         optimizer_cls, optimizer_kwargs = self.get_optimizer_cls_and_kwargs(
@@ -246,9 +250,63 @@ class SimpleMemVLATrainer(Trainer):
             self._metric_sums["vl_loss"] += (
                 float(vl_loss.detach().cpu()) if vl_loss is not None else 0.0
             )
+            if outputs.mem_norm is not None:
+                self._metric_sums["mem_norm"] += float(outputs.mem_norm.cpu())
             self._metric_count += 1
 
         return (loss, outputs) if return_outputs else loss
+
+    def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
+        """Held-out flow loss with real / zeroed / batch-shuffled memory.
+
+        Noise and timesteps are fixed per batch so the three passes differ only
+        in the memory input; ``mem_gap_* = loss(mode) - loss(normal)``.
+        """
+        dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
+        if dataset is None:
+            return {}
+        model = self.model
+        was_training = model.training
+        model.eval()
+        modes = ["normal"]
+        if getattr(model.config, "use_memory", False):
+            modes += ["zero", "shuffle"]
+        device = self.args.device
+        sums = torch.zeros(len(modes), device=device, dtype=torch.float64)
+        count = torch.zeros((), device=device, dtype=torch.float64)
+        dataloader = self.get_eval_dataloader(dataset)
+        with torch.no_grad():
+            for step, inputs in enumerate(dataloader):
+                if step >= self.args.eval_max_batches:
+                    break
+                inputs = self._prepare_inputs(inputs)
+                actions = inputs["actions"]
+                batch_size = actions.shape[0]
+                with torch.random.fork_rng(devices=[]):
+                    torch.manual_seed(self.args.seed + step + 1000 * self.args.process_index)
+                    noise = torch.randn(actions.shape)
+                    timesteps = sample_flow_timesteps(
+                        batch_size,
+                        device=torch.device("cpu"),
+                        beta_alpha=model.config.timestep_beta_alpha,
+                        beta_beta=model.config.timestep_beta_beta,
+                    )
+                for i, mode in enumerate(modes):
+                    outputs = model(**inputs, noise=noise, timesteps=timesteps, mem_mode=mode)
+                    sums[i] += outputs.action_loss.double() * batch_size
+                count += batch_size
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.all_reduce(sums)
+            torch.distributed.all_reduce(count)
+        losses = (sums / count.clamp_min(1)).tolist()
+        metrics = {f"{metric_key_prefix}_action_loss": losses[0]}
+        for mode, value in zip(modes[1:], losses[1:]):
+            metrics[f"{metric_key_prefix}_action_loss_{mode}_mem"] = value
+            metrics[f"{metric_key_prefix}_mem_gap_{mode}"] = value - losses[0]
+        metrics[f"{metric_key_prefix}_samples"] = float(count)
+        self.log(metrics)
+        model.train(was_training)
+        return metrics
 
     def log(self, logs: dict, *args, **kwargs):
         if "loss" in logs and self._metric_count > 0:
@@ -257,20 +315,23 @@ class SimpleMemVLATrainer(Trainer):
                 for key, value in self._metric_sums.items()
             }
             logs = {**logs, **window}
-            self._metric_sums = {"action_loss": 0.0, "vl_loss": 0.0}
+            self._metric_sums = {key: 0.0 for key in self._metric_sums}
             self._metric_count = 0
         if "learning_rate" in logs and self.optimizer is not None:
-            group_lrs = [group["lr"] for group in self.optimizer.param_groups]
-            if group_lrs:
-                logs["lr/backbone"] = group_lrs[0]
-                logs["lr/action_head"] = group_lrs[-1]
+            for i, group in enumerate(self.optimizer.param_groups):
+                logs[f"lr/{group.get('name', i)}"] = group["lr"]
         return super().log(logs, *args, **kwargs)
 
     def _save(self, output_dir=None, state_dict=None):
         super()._save(output_dir=output_dir, state_dict=state_dict)
-        if self.args.process_index != 0 or self.data_root is None:
+        if self.args.process_index != 0:
             return
         output = Path(output_dir or self.args.output_dir)
-        src = Path(self.data_root) / "meta" / "stats.json"
+        if self.stats_path is not None:
+            src = Path(self.stats_path)
+        elif self.data_root is not None:
+            src = Path(self.data_root) / "meta" / "stats.json"
+        else:
+            return
         if src.is_file():
             shutil.copyfile(src, output / "stats.json")

@@ -1,5 +1,9 @@
+import dataclasses
+import json
 import os
 import warnings
+from pathlib import Path
+
 import torch
 from simplememvla.compat import apply_fla_torch_compat
 
@@ -14,7 +18,7 @@ from configs.sft_params import (
 )
 from simplememvla.benchmarks import BenchmarkSpec, get_benchmark
 from simplememvla.data.collator import SimpleMemVLADataCollator
-from simplememvla.data.dataset import SimpleMemVLADataset
+from simplememvla.data.dataset import MEM_META_FILE, SimpleMemVLADataset
 from simplememvla.model import SimpleMemVLAConfig, SimpleMemVLAForActionPrediction
 from simplememvla.training.sft_runner import TrainRunner
 
@@ -63,6 +67,31 @@ def resolve_benchmark_defaults(data_args: DataArguments) -> BenchmarkSpec:
     return spec
 
 
+def read_episodes_file(path: str) -> list[int]:
+    text = Path(path).read_text()
+    return [int(tok) for tok in text.replace(",", " ").split()]
+
+
+def resolve_memcache_defaults(model_args: ModelArguments, data_args: DataArguments) -> dict:
+    if data_args.episodes_file:
+        data_args.episodes = read_episodes_file(data_args.episodes_file)
+    ckpt = model_args.init_from_checkpoint
+    if ckpt and data_args.stats_path is None:
+        # A warm-started DiT must keep the normalisation it was trained with.
+        data_args.stats_path = os.path.join(ckpt, "stats.json")
+    if model_args.condition_source == "prompt" and model_args.vl_loss_weight:
+        model_args.vl_loss_weight = 0.0
+    mem_meta = {}
+    if model_args.use_memory:
+        if not data_args.mem_feature_dir:
+            raise ValueError("use_memory=True requires --mem_feature_dir")
+        with open(os.path.join(data_args.mem_feature_dir, MEM_META_FILE)) as f:
+            mem_meta = json.load(f)
+    elif data_args.mem_feature_dir:
+        raise ValueError("--mem_feature_dir is set but --use_memory is false")
+    return mem_meta
+
+
 def train(
     model_args: ModelArguments,
     data_args: DataArguments,
@@ -70,15 +99,35 @@ def train(
 ):
     set_seed(training_args.seed)
     spec = resolve_benchmark_defaults(data_args)
+    mem_meta = resolve_memcache_defaults(model_args, data_args)
 
     processor = AutoProcessor.from_pretrained(
-        model_args.backbone_model_name_or_path,
+        model_args.init_from_checkpoint or model_args.backbone_model_name_or_path,
         trust_remote_code=model_args.trust_remote_code,
         padding_side="right",
         model_max_length=model_args.model_max_length,
     )
 
-    train_dataset = SimpleMemVLADataset(data_args, spec)
+    mem_frame_pool = model_args.mem_frame_pool if model_args.use_memory else None
+    train_dataset = SimpleMemVLADataset(
+        data_args,
+        spec,
+        condition_source=model_args.condition_source,
+        mem_frame_pool=mem_frame_pool,
+    )
+    eval_dataset = None
+    if data_args.val_episodes_file:
+        eval_args = dataclasses.replace(
+            data_args,
+            episodes=read_episodes_file(data_args.val_episodes_file),
+            image_aug=False,
+        )
+        eval_dataset = SimpleMemVLADataset(
+            eval_args,
+            spec,
+            condition_source=model_args.condition_source,
+            mem_frame_pool=mem_frame_pool,
+        )
 
     config = SimpleMemVLAConfig(
         backbone_model_name_or_path=model_args.backbone_model_name_or_path,
@@ -110,15 +159,53 @@ def train(
         history_image_keys=train_dataset.history_image_keys,
         subtask_key=train_dataset.subtask_key,
         subtask_index_key=train_dataset.subtask_index_key,
+        condition_source=model_args.condition_source,
+        single_frame=data_args.single_frame,
+        use_memory=model_args.use_memory,
+        mem_feature_dim=mem_meta.get("feature_dim"),
+        mem_feature_type=mem_meta.get("feature_type", "vit_merger"),
+        mem_camera_key=mem_meta.get("camera_key"),
+        mem_window_sec=data_args.mem_window_sec,
+        mem_fps=data_args.mem_fps,
+        mem_frame_pool=model_args.mem_frame_pool,
+        mem_hidden_size=model_args.mem_hidden_size,
+        mem_depth=model_args.mem_depth,
+        mem_num_heads=model_args.mem_num_heads,
+        mem_mlp_ratio=model_args.mem_mlp_ratio,
+        mem_num_queries=model_args.mem_num_queries,
+        mem_compressor_depth=model_args.mem_compressor_depth,
+        mem_fusion=model_args.mem_fusion,
+        mem_dropout=model_args.mem_dropout,
+        mem_dropout_prob=model_args.mem_dropout_prob,
     )
 
-    model = SimpleMemVLAForActionPrediction.from_backbone(
-        model_args.backbone_model_name_or_path,
-        config=config,
-        dtype=_dtype_from_string(model_args.dtype),
-        attn_implementation=model_args.attn_implementation,
-        trust_remote_code=model_args.trust_remote_code,
-    )
+    if model_args.init_from_checkpoint:
+        dtype = _dtype_from_string(model_args.dtype)
+        if not isinstance(dtype, torch.dtype):
+            raise ValueError("--init_from_checkpoint needs an explicit --dtype (e.g. bfloat16)")
+        model = SimpleMemVLAForActionPrediction.from_simplememvla_checkpoint(
+            model_args.init_from_checkpoint,
+            config=config,
+            dtype=dtype,
+            attn_implementation=model_args.attn_implementation,
+        )
+    else:
+        model = SimpleMemVLAForActionPrediction.from_backbone(
+            model_args.backbone_model_name_or_path,
+            config=config,
+            dtype=_dtype_from_string(model_args.dtype),
+            attn_implementation=model_args.attn_implementation,
+            trust_remote_code=model_args.trust_remote_code,
+        )
+    if training_args.process_index == 0:
+        counts: dict[str, list[int]] = {}
+        for name, param in model.named_parameters():
+            key = name.split(".")[0]
+            total, trainable = counts.setdefault(key, [0, 0])
+            counts[key] = [total + param.numel(), trainable + param.numel() * param.requires_grad]
+        for key, (total, trainable) in counts.items():
+            print(f"[params] {key}: total={total / 1e6:.1f}M trainable={trainable / 1e6:.1f}M")
+        print(f"[norm] stats_path={data_args.stats_path or os.path.join(data_args.root, 'meta/stats.json')}")
 
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -126,6 +213,7 @@ def train(
     data_collator = SimpleMemVLADataCollator(
         processor,
         max_length=model_args.model_max_length,
+        condition_source=model_args.condition_source,
     )
 
     os.makedirs(training_args.output_dir, exist_ok=True)
@@ -137,6 +225,8 @@ def train(
         resume_from_checkpoint=training_args.resume,
         processor=processor,
         data_root=data_args.root,
+        eval_dataset=eval_dataset,
+        stats_path=data_args.stats_path,
     )
     runner.train()
 
