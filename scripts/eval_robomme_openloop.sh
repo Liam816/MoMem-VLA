@@ -5,6 +5,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/eval_robomme_openloop.sh \
+  ROOT_DIR=--root \
+  REPO_ID=--repo_id \
+  NUM_EPISODES=--num_episodes \
+  NUM_DENOISING_STEPS=--num_denoising_steps \
+  TEMPERATURE=--temperature \
+  NUM_OPEN_LOOP_STEPS=--num_open_loop_steps \
+  MAX_SUBTASK_TOKENS=--max_subtask_tokens \
+  ATTN_IMPLEMENTATION=--attn_implementation
 
 CONFIG="$REPO_ROOT/configs/eval/openloop/robomme.yaml"
 if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi

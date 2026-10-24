@@ -9,6 +9,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/train_mem.sh "${TRAIN_LEGACY_ENV[@]}"
 cd "$REPO_ROOT"
 
 EXP="${EXP:-E2}"

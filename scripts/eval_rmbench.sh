@@ -9,6 +9,24 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/eval_rmbench.sh \
+  TASK_CONFIG=--task_config \
+  INSTRUCTION_TYPE=--instruction_type \
+  SEEDS_PER_TASK=--seeds_per_task \
+  GROUP_SIZE=--group_size \
+  EXECUTE_HORIZON=--execute_horizon \
+  CAPTURE_STRIDE=--capture_stride \
+  PIPELINED=--pipelined \
+  DENSE_SUBSTEPS=--dense_substeps \
+  NUM_DENOISING_STEPS=--num_denoising_steps \
+  EVAL_TEMPERATURE=--eval_temperature \
+  MAX_SUBTASK_TOKENS=--max_subtask_tokens \
+  COMPUTE_DTYPE=--compute_dtype \
+  ATTN_IMPLEMENTATION=--attn_implementation \
+  TASKS=--tasks \
+  EXPERT_CHECK="--expert_check / --no_expert_check" \
+  VIDEO_MAX_PER_TASK=--video_max_per_task
 
 CONFIG="$REPO_ROOT/configs/eval/rmbench.yaml"
 if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi

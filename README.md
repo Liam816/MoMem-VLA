@@ -501,7 +501,9 @@ column) still comes from the benchmark spec unless a `data:` key overrides it.
 
 Flags after the config override it, and env vars only describe the launch
 (`CUDA_VISIBLE_DEVICES`, `GPUS_PER_NODE`, `NNODES`, `NODE_RANK`, `MASTER_ADDR`,
-`MASTER_PORT`, `WANDB_*`):
+`MASTER_PORT`, `WANDB_*`). The hyperparameter env vars older versions read
+(`MAX_STEPS`, `PER_DEVICE_BATCH`, `GRAD_ACCUM`, `EXECUTE_HORIZON`, ...) make every launcher
+exit with the flag to use instead, rather than being silently ignored:
 
 ```bash
 # fewer GPUs / smaller batch

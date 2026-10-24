@@ -16,6 +16,14 @@ GPUS="${2:?usage: launch_memcache.sh <E1|E2|E3> <gpu list, e.g. 4,5>}"
 shift 2
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# GRAD_ACCUM / OUTPUT_DIR / RUN_NAME / RESUME are this launcher's own knobs; every other
+# old hyperparameter env var must fail here, before the run goes to the background.
+source "$REPO_ROOT/scripts/legacy_env.sh"
+_legacy=()
+for _pair in "${TRAIN_LEGACY_ENV[@]}"; do
+  case "${_pair%%=*}" in GRAD_ACCUM|OUTPUT_DIR|RUN_NAME|RESUME) ;; *) _legacy+=("$_pair") ;; esac
+done
+check_legacy_env scripts/launch_memcache.sh "${_legacy[@]}"
 DATA_HOME="${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}"
 CONDA_ENV="${CONDA_ENV:-simplememvla-robomme}"
 OUT_ROOT="${OUT_ROOT:-$DATA_HOME/outputs/memcache}"
@@ -50,6 +58,8 @@ OVERRIDES=(
   --resume "$RESUME"
   "$@"
 )
+# Consumed above; keep them out of train.sh's environment, where they would be rejected.
+export -n GRAD_ACCUM OUTPUT_DIR RUN_NAME RESUME
 
 cd "$REPO_ROOT"
 if [[ "${DRY_RUN:-0}" == 1 ]]; then

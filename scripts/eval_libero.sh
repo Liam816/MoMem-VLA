@@ -8,6 +8,22 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/eval_libero.sh \
+  TASK_SUITES=--task_suites \
+  TASKS=--tasks \
+  EPISODES_PER_TASK=--episodes_per_task \
+  GROUP_SIZE=--group_size \
+  EXECUTE_HORIZON=--execute_horizon \
+  PIPELINED=--pipelined \
+  MAX_STEPS=--max_steps \
+  NUM_STEPS_WAIT=--num_steps_wait \
+  NUM_DENOISING_STEPS=--num_denoising_steps \
+  EVAL_TEMPERATURE=--eval_temperature \
+  MAX_REASONING_TOKENS=--max_reasoning_tokens \
+  COMPUTE_DTYPE=--compute_dtype \
+  ATTN_IMPLEMENTATION=--attn_implementation \
+  VIDEO_MAX_PER_TASK=--video_max_per_task
 
 CONFIG="$REPO_ROOT/configs/eval/libero.yaml"
 if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi

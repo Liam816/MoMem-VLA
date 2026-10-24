@@ -3,16 +3,35 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/eval_robomemarena.sh \
+  TRIALS=--num-trials-per-task \
+  TASK_START=--task-start \
+  TASK_END=--task-end \
+  SEED=--seed \
+  WORKERS_PER_GPU=--workers-per-gpu \
+  MAX_STEPS=--max-steps \
+  REPLAN_STEPS=--replan-steps \
+  NUM_STEPS_WAIT=--num-steps-wait \
+  NUM_DENOISING_STEPS=--num-denoising-steps \
+  MAX_REASONING_TOKENS=--max-reasoning-tokens \
+  ATTN_IMPLEMENTATION=--attn-implementation \
+  EPISODES_PER_SHARD=--episodes-per-shard \
+  LOG_EVERY=--log-every \
+  SEED_POLICY="--seed-policy / --no-seed-policy" \
+  RESUME="--resume / --no-resume" \
+  GPU_MEMORY_CAP_GIB=--gpu-memory-cap-gib
 
 # usage: bash scripts/eval_robomemarena.sh <checkpoint_dir> [out_dir] [--flag value ...]
 # Protocol knobs live in configs/eval/robomemarena.yaml (CONFIG=... picks another file, and an
-# extra --config file.yaml merges on top); trailing flags override it, e.g. --gpus 0,1 --task-end 3.
+# extra --config file.yaml merges on top); trailing flags override it, e.g. --task-end 3.
+# GPUS=0,1 picks the GPUs (same as --gpus 0,1).
 CKPT="${1:?usage: bash eval_robomemarena.sh <checkpoint_dir> [out_dir] [--flag value ...]}"
 shift
 OUT="logs/eval_$(basename "$CKPT")_$(date +%Y%m%d_%H%M%S)"
 if [[ $# -gt 0 && "$1" != --* ]]; then OUT="$1"; shift; fi
 CONFIG="${CONFIG:-configs/eval/robomemarena.yaml}"
-ARGS=(--config "$CONFIG" --checkpoint "$CKPT" --out-root "$OUT" "$@")
+ARGS=(--config "$CONFIG" --checkpoint "$CKPT" --out-root "$OUT" ${GPUS:+--gpus "$GPUS"} "$@")
 PYBIN="${PYBIN:-python}"
 
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"

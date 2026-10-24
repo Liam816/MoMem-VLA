@@ -8,6 +8,21 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/eval_robomme.sh \
+  DATASET_SPLIT=--dataset_split \
+  EPISODES_PER_TASK=--episodes_per_task \
+  GROUP_SIZE=--group_size \
+  PIPELINED="configs/eval/robomme_pipelined.yaml as the first argument (or --pipelined --execute_horizon 20)" \
+  EXECUTE_HORIZON=--execute_horizon \
+  MAX_STEPS=--max_steps \
+  NUM_DENOISING_STEPS=--num_denoising_steps \
+  EVAL_TEMPERATURE=--eval_temperature \
+  MAX_SUBTASK_TOKENS=--max_subtask_tokens \
+  COMPUTE_DTYPE=--compute_dtype \
+  ATTN_IMPLEMENTATION=--attn_implementation \
+  TASKS=--tasks \
+  VIDEO_MAX_PER_TASK=--video_max_per_task
 
 CONFIG="$REPO_ROOT/configs/eval/robomme.yaml"
 if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi

@@ -8,6 +8,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/train.sh "${TRAIN_LEGACY_ENV[@]}"
 
 CONFIG="${1:-}"
 if [[ -z "$CONFIG" || "$CONFIG" == --* ]]; then

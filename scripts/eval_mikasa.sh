@@ -8,6 +8,20 @@
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+source "$REPO_ROOT/scripts/legacy_env.sh"
+check_legacy_env scripts/eval_mikasa.sh \
+  N_EPISODES=--n_episodes \
+  START_SEED=--start_seed \
+  EXECUTE_HORIZON=--execute_horizon \
+  DECISION_PATH=--decision_path \
+  NUM_DENOISING_STEPS=--num_denoising_steps \
+  EVAL_TEMPERATURE=--eval_temperature \
+  MAX_SUBTASK_TOKENS=--max_subtask_tokens \
+  COMPUTE_DTYPE=--compute_dtype \
+  ATTN_IMPLEMENTATION=--attn_implementation \
+  CONTROL_MODE=--control_mode \
+  TASKS=--tasks \
+  SAVE_VIDEOS=--save_videos
 
 CONFIG="$REPO_ROOT/configs/eval/mikasa.yaml"
 if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi
