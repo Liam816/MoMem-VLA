@@ -1,0 +1,12 @@
+# robomme open-loop eval on the dataset (robomme_sim/openloop_eval.py): action L1 + sub-task accuracy.
+pretrained_checkpoint: ./checkpoints/sft/simplememvla/robomme_baseline
+root: ./data/datasets/yinchenghust/robomme_lerobot
+repo_id: yinchenghust/robomme_lerobot
+num_episodes: 5
+episodes: null             # explicit episode indices (overrides num_episodes)
+num_denoising_steps: 10
+temperature: 1.0
+num_open_loop_steps: 16      # matches the closed-loop execute_horizon
+max_subtask_tokens: 64
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2

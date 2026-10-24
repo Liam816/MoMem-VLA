@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
+# usage: bash scripts/eval_robomme.sh [config.yaml] [--flag value ...]
+#   default config: configs/eval/robomme.yaml (configs/eval/robomme_pipelined.yaml for pipelined decisions)
+# Protocol knobs live in the YAML; trailing flags override it, e.g.
+#   CHECKPOINT=checkpoints/simplememvla_robomme GPUS=0,1,2,3 bash scripts/eval_robomme.sh --episodes_per_task 10
+# Env vars only describe the run: CHECKPOINT, GPUS (one worker per GPU; NUM_GPUS defaults to their
+# count), RUN_TAG / RUN_DIR / LOG_FILE, VIDEO_DIR (empty disables videos), PYBIN.
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-CHECKPOINT="${CHECKPOINT:-./checkpoints/sft/simplememvla/robomme_baseline}"
-DATASET_SPLIT="${DATASET_SPLIT:-test}"
-EPISODES_PER_TASK="${EPISODES_PER_TASK:-50}"
-GROUP_SIZE="${GROUP_SIZE:-17}"
-PIPELINED="${PIPELINED:-0}"
-if [ "$PIPELINED" != 0 ]; then
-  EXECUTE_HORIZON="${EXECUTE_HORIZON:-20}"
-else
-  EXECUTE_HORIZON="${EXECUTE_HORIZON:-16}"
-fi
-MAX_STEPS="${MAX_STEPS:-1300}"
-NUM_DENOISING_STEPS="${NUM_DENOISING_STEPS:-10}"
-EVAL_TEMPERATURE="${EVAL_TEMPERATURE:-1.0}"
-MAX_SUBTASK_TOKENS="${MAX_SUBTASK_TOKENS:-64}"
-COMPUTE_DTYPE="${COMPUTE_DTYPE:-bfloat16}"
-ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
-GPU="${GPU:-0}"
-NUM_GPUS="${NUM_GPUS:-1}"
-GPUS="${GPUS:-$GPU}"
-TASKS="${TASKS:-}"
+CONFIG="$REPO_ROOT/configs/eval/robomme.yaml"
+if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi
+CHECKPOINT="${CHECKPOINT:-}"
+GPUS="${GPUS:-${GPU:-0}}"
+IFS=, read -r -a _gpus <<< "$GPUS"
+NUM_GPUS="${NUM_GPUS:-${#_gpus[@]}}"
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
 RUN_DIR="${RUN_DIR:-$REPO_ROOT/logs/robomme_sim/$RUN_TAG}"
 LOG_FILE="${LOG_FILE:-$RUN_DIR/eval.log}"
 VIDEO_DIR="${VIDEO_DIR-$RUN_DIR/videos}"
-VIDEO_MAX_PER_TASK="${VIDEO_MAX_PER_TASK:-1}"
 
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT:${PYTHONPATH:-}"
@@ -45,29 +36,18 @@ PYBIN="${PYBIN:-python}"
 
 mkdir -p "$RUN_DIR"
 [ -n "$VIDEO_DIR" ] && mkdir -p "$VIDEO_DIR"
+echo "[eval_robomme_sim] config : $CONFIG"
 echo "[eval_robomme_sim] run dir: $RUN_DIR"
 echo "[eval_robomme_sim] log    : $LOG_FILE"
-echo "[eval_robomme_sim] videos : ${VIDEO_DIR:-<disabled>} (max ${VIDEO_MAX_PER_TASK}/task)"
+echo "[eval_robomme_sim] videos : ${VIDEO_DIR:-<disabled>}"
 
 set +e
 "$PYBIN" -m robomme_sim.eval_success \
-  --pretrained_checkpoint "$CHECKPOINT" \
-  --dataset_split "$DATASET_SPLIT" \
-  --episodes_per_task "$EPISODES_PER_TASK" \
-  --group_size "$GROUP_SIZE" \
-  --execute_horizon "$EXECUTE_HORIZON" \
-  ${PIPELINED:+$([ "$PIPELINED" != 0 ] && echo --pipelined)} \
-  --max_steps "$MAX_STEPS" \
-  --num_denoising_steps "$NUM_DENOISING_STEPS" \
-  --eval_temperature "$EVAL_TEMPERATURE" \
-  --max_subtask_tokens "$MAX_SUBTASK_TOKENS" \
-  --compute_dtype "$COMPUTE_DTYPE" \
-  --attn_implementation "$ATTN_IMPLEMENTATION" \
+  --config "$CONFIG" \
+  ${CHECKPOINT:+--pretrained_checkpoint "$CHECKPOINT"} \
   --num_gpus "$NUM_GPUS" \
   --log_file "$LOG_FILE" \
   ${VIDEO_DIR:+--video_dir "$VIDEO_DIR"} \
-  --video_max_per_task "$VIDEO_MAX_PER_TASK" \
-  ${TASKS:+--tasks $TASKS} \
   "$@" 2>&1 | tee "$LOG_FILE"
 status=${PIPESTATUS[0]}
 echo "[eval_robomme_sim] done (exit $status). Log: $LOG_FILE  Results: $RUN_DIR/results.json"

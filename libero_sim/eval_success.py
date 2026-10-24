@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from simplememvla.config import parse_args_with_config
 from libero_sim.batched_policy import BatchedEvalPolicy
 from libero_sim.inproc_pool import InProcSimPool
 from libero_sim.libero_env import (
@@ -97,7 +98,7 @@ def parse_args() -> argparse.Namespace:
                          "--video_dir is set. 0 disables.")
     ap.add_argument("--log_file", default=None,
                     help="If set, results.json is placed next to this log path (logs/ convention).")
-    return ap.parse_args()
+    return parse_args_with_config(ap)
 
 
 def resolve_task_keys(args) -> list[str]:

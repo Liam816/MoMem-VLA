@@ -3,16 +3,17 @@
 #
 #   bash scripts/launch_memcache.sh E1 4,5            # new run, or resume if checkpoints exist
 #   bash scripts/launch_memcache.sh E2 6,7
+#   bash scripts/launch_memcache.sh E2 6,7 --max_steps 20000 --mem_depth 6
 #   DRY_RUN=1 bash scripts/launch_memcache.sh E1 4,5  # print the full command only
 #
-# Any train_mem.sh variable can be overridden in the environment
-# (MAX_STEPS, PER_DEVICE_BATCH, GRAD_ACCUM, MEM_*, ...).
+# The recipe is configs/train/memcache/<EXP>.yaml; flags after the GPU list override it.
 # Output: $DATA_HOME/outputs/memcache/robomme_small_<EXP>/
 # Log:    $DATA_HOME/outputs/memcache/run_<EXP>_<timestamp>.log
 set -euo pipefail
 
 EXP="${1:?usage: launch_memcache.sh <E1|E2|E3> <gpu list, e.g. 4,5>}"
 GPUS="${2:?usage: launch_memcache.sh <E1|E2|E3> <gpu list, e.g. 4,5>}"
+shift 2
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_HOME="${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}"
@@ -38,15 +39,21 @@ source "$DATA_HOME/eval_env.sh"
 export EXP
 export CUDA_VISIBLE_DEVICES="$GPUS"
 export MASTER_PORT="${MASTER_PORT:-$DEF_PORT}"
-export GRAD_ACCUM="${GRAD_ACCUM:-$DEF_ACCUM}"
-export OUTPUT_DIR="${OUTPUT_DIR:-$OUT_ROOT/$RUN_NAME}"
-export RUN_NAME
+GRAD_ACCUM="${GRAD_ACCUM:-$DEF_ACCUM}"
+OUTPUT_DIR="${OUTPUT_DIR:-$OUT_ROOT/$RUN_NAME}"
 # auto: resume from the newest checkpoint-* in OUTPUT_DIR, else start fresh.
-export RESUME="${RESUME:-auto}"
+RESUME="${RESUME:-auto}"
+OVERRIDES=(
+  --gradient_accumulation_steps "$GRAD_ACCUM"
+  --run_name "$RUN_NAME"
+  --output_dir "$OUTPUT_DIR"
+  --resume "$RESUME"
+  "$@"
+)
 
 cd "$REPO_ROOT"
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
-  DRY_RUN=1 bash scripts/train_mem.sh
+  DRY_RUN=1 bash scripts/train_mem.sh "${OVERRIDES[@]}"
   exit 0
 fi
 
@@ -60,11 +67,11 @@ fi
 mkdir -p "$OUT_ROOT"
 LOG="$OUT_ROOT/run_${EXP}_$(date +%Y%m%d_%H%M%S).log"
 {
-  echo "launched $(date '+%F %T') EXP=$EXP GPUS=$GPUS GRAD_ACCUM=$GRAD_ACCUM RESUME=$RESUME"
+  echo "launched $(date '+%F %T') EXP=$EXP GPUS=$GPUS overrides: ${OVERRIDES[*]}"
   echo "git: $(git rev-parse --short HEAD) branch $(git branch --show-current) dirty=$(git status --porcelain | wc -l)"
 } > "$LOG"
-setsid nohup bash -c 'bash scripts/train_mem.sh; echo "TRAIN_EXIT=$? $(date "+%F %T")"' \
-  >> "$LOG" 2>&1 < /dev/null &
+setsid nohup bash -c 'bash scripts/train_mem.sh "$@"; echo "TRAIN_EXIT=$? $(date "+%F %T")"' \
+  _ "${OVERRIDES[@]}" >> "$LOG" 2>&1 < /dev/null &
 echo "started $EXP on GPUs $GPUS (session pid $!)"
 echo "log:    $LOG"
 echo "output: $OUTPUT_DIR"

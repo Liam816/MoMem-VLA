@@ -1,0 +1,18 @@
+# LIBERO closed-loop protocol (libero_sim/eval_success.py): 4 suites x 10 tasks x 50 frozen init states.
+# Keys are the eval_success.py flags; CLI flags override them. The model-side pipeline
+# (history window, cameras, prompt) is rebuilt from the checkpoint's config.json.
+pretrained_checkpoint: ./checkpoints/sft/simplememvla/libero_baseline
+task_suites: null          # null = all four; or e.g. [libero_10, libero_goal]
+tasks: null                # explicit 'suite/task_id' keys (overrides task_suites)
+episodes_per_task: 50
+group_size: 10
+execute_horizon: 8
+pipelined: false
+max_steps: 0               # 0 = per-suite community budget
+num_steps_wait: 10
+num_denoising_steps: 10
+eval_temperature: 1.0
+max_reasoning_tokens: 256
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2
+video_max_per_task: 1

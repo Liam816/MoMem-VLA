@@ -1,0 +1,19 @@
+# RMBench closed-loop protocol (rmbench_sim/eval_success.py): 10 tasks x 100 expert-solvable seeds.
+# Keys are the eval_success.py flags; CLI flags override them.
+pretrained_checkpoint: checkpoints/simplememvla_rmbench
+tasks: null                # null = the 10 implemented tasks
+task_config: demo_clean
+instruction_type: seen
+seeds_per_task: 100
+group_size: 4
+execute_horizon: 16
+capture_stride: 1
+pipelined: false
+dense_substeps: 15
+num_denoising_steps: 10
+eval_temperature: 1.0
+max_subtask_tokens: 64
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2
+expert_check: true
+video_max_per_task: 1

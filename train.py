@@ -17,6 +17,13 @@ from configs.sft_params import (
     SFTTrainingArguments,
 )
 from simplememvla.benchmarks import BenchmarkSpec, get_benchmark
+from simplememvla.config import (
+    apply_config_defaults,
+    dump_config,
+    flatten_sections,
+    load_configs,
+    split_config_args,
+)
 from simplememvla.data.collator import SimpleMemVLADataCollator
 from simplememvla.data.dataset import MEM_META_FILE, SimpleMemVLADataset
 from simplememvla.model import SimpleMemVLAConfig, SimpleMemVLAForActionPrediction
@@ -217,6 +224,8 @@ def train(
     )
 
     os.makedirs(training_args.output_dir, exist_ok=True)
+    if training_args.process_index == 0:
+        save_resolved_config(model_args, data_args, training_args)
     runner = TrainRunner(
         model=model,
         training_args=training_args,
@@ -231,8 +240,37 @@ def train(
     runner.train()
 
 
+CONFIG_SECTIONS = {
+    "model": ModelArguments,
+    "data": DataArguments,
+    "training": SFTTrainingArguments,
+}
+
+
+def parse_train_args(args: list[str] | None = None):
+    parser = HfArgumentParser(tuple(CONFIG_SECTIONS.values()))
+    config_paths, rest = split_config_args(args)
+    if config_paths:
+        sections = {
+            name: [f.name for f in dataclasses.fields(cls) if f.init]
+            for name, cls in CONFIG_SECTIONS.items()
+        }
+        flat = flatten_sections(load_configs(config_paths), sections)
+        apply_config_defaults(parser, flat)
+    return parser.parse_args_into_dataclasses(args=rest, look_for_args_file=False)
+
+
+def save_resolved_config(model_args, data_args, training_args) -> None:
+    """Record the fully resolved arguments (YAML + CLI + benchmark defaults)."""
+    resolved = {
+        "model": dataclasses.asdict(model_args),
+        "data": dataclasses.asdict(data_args),
+        "training": json.loads(training_args.to_json_string()),
+    }
+    dump_config(resolved, os.path.join(training_args.output_dir, "train_config.yaml"))
+
+
 if __name__ == "__main__":
-    parser = HfArgumentParser((ModelArguments, DataArguments, SFTTrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args = parse_train_args()
 
     train(model_args, data_args, training_args)

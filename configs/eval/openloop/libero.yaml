@@ -1,0 +1,12 @@
+# libero open-loop eval on the dataset (libero_sim/openloop_eval.py): action L1 + sub-task accuracy.
+pretrained_checkpoint: ./checkpoints/sft/simplememvla/libero_baseline
+root: ./data/datasets/yinchenghust/libero_lerobot
+repo_id: yinchenghust/libero_lerobot
+num_episodes: 5
+episodes: null             # explicit episode indices (overrides num_episodes)
+num_denoising_steps: 10
+temperature: 1.0
+num_open_loop_steps: 8      # matches the closed-loop execute_horizon
+max_reasoning_tokens: 256
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2

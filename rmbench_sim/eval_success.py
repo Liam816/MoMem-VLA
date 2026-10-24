@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from simplememvla.config import parse_args_with_config
 from rmbench_sim.batched_policy import BatchedEvalPolicy
 from rmbench_sim.inproc_pool import InProcSimPool
 from rmbench_sim.rmbench_env import VENDORED_SIM_DIR, pin_worker_gpu
@@ -116,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--log_file", default=None,
                     help="If set, tee all eval stdout to this file (logs/ convention). The launcher passes a "
                          "timestamped path so each run keeps its own full log next to the videos.")
-    return ap.parse_args()
+    return parse_args_with_config(ap)
 
 
 def _is_cuda_oom(exc: BaseException) -> bool:

@@ -1,0 +1,16 @@
+# RoboMME closed-loop protocol (robomme_sim/eval_success.py): 16 tasks x 50 frozen test episodes.
+# Keys are the eval_success.py flags; CLI flags override them.
+pretrained_checkpoint: ./checkpoints/sft/simplememvla/robomme_baseline
+tasks: null                # null = all 16 tasks
+dataset_split: test
+episodes_per_task: 50
+group_size: 17
+execute_horizon: 16
+pipelined: false
+max_steps: 1300
+num_denoising_steps: 10
+eval_temperature: 1.0
+max_subtask_tokens: 64
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2
+video_max_per_task: 1

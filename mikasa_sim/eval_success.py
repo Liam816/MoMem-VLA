@@ -25,6 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from simplememvla.config import parse_args_with_config
+
 DEFAULT_TASKS = [
     "ShellGameTouch-VLA-v0",
     "InterceptMedium-VLA-v0",
@@ -97,7 +99,7 @@ def parse_args() -> argparse.Namespace:
                          "are skipped.")
     ap.add_argument("--log_file", default=None,
                     help="If set, results land next to this log path (logs/ convention).")
-    return ap.parse_args()
+    return parse_args_with_config(ap)
 
 
 def _check_attn_available(attn_implementation: str) -> None:

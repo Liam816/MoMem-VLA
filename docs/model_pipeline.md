@@ -32,7 +32,9 @@ SimpleMemVLA 没有专门的记忆模块。它把过去一段时间的主相机�
 | `train.py` | 训练入口：解析参数 → 合并 benchmark 默认值 → 构建 dataset / model / collator → `TrainRunner` |
 | `configs/sft_params.py` | `ModelArguments` / `DataArguments` / `SFTTrainingArguments` 三组超参 |
 | `configs/zero*.json` | DeepSpeed 配置，默认 `zero2.json` |
-| `scripts/train.sh` | torchrun 启动脚本，按 benchmark 设置 batch / steps |
+| `configs/train/*.yaml` | 训练配置：`base.yaml` 放公共超参，`<benchmark>.yaml` 继承它并设置 batch / steps |
+| `simplememvla/config.py` | YAML 加载（`_base_` 继承、`${VAR:-default}` 环境变量展开），train / eval 入口共用 |
+| `scripts/train.sh` | torchrun 启动脚本：`bash scripts/train.sh <benchmark|config.yaml> [--flag value ...]` |
 | `simplememvla/model/configuration_simplememvla.py` | `SimpleMemVLAConfig`，同时保存推理端重建 pipeline 需要的全部元信息 |
 | `simplememvla/model/modeling_simplememvla.py` | `SimpleMemVLAForActionPrediction`：backbone 前向、子任务 CE、条件抽取、flow-matching loss、推理接口 |
 | `simplememvla/model/dit_action_head.py` | `DiTActionHead`：DiT block、Qwen 对齐的 M-RoPE、Euler 采样 |
@@ -215,10 +217,11 @@ bash scripts/train.sh robomme
 ```
 
 ```bash
-PER_DEVICE_BATCH=4 GRAD_ACCUM=2 RESUME=auto bash scripts/train.sh libero
+bash scripts/train.sh libero --per_device_train_batch_size 4 --gradient_accumulation_steps 2 --resume auto
 ```
 
-`train.sh` 用 torchrun（默认单机 8 卡）启动 `train.py`，DeepSpeed ZeRO-2，bf16 + tf32，开启 gradient checkpointing，用 wandb 记录。
+超参写在 `configs/train/<benchmark>.yaml`（继承 `base.yaml`），命令行参数覆盖 YAML；实际生效的完整配置会写到 `<output_dir>/train_config.yaml`。
+`train.sh` 用 torchrun（卡数默认取 `CUDA_VISIBLE_DEVICES` 的个数）启动 `train.py`，DeepSpeed ZeRO-2，bf16 + tf32，开启 gradient checkpointing，用 wandb 记录。
 
 | Benchmark | per-device batch | grad accum | max steps |
 |---|---|---|---|
@@ -370,5 +373,5 @@ CHECKPOINT=... bash scripts/eval_libero_openloop.sh
 
 1. 把数据转成 LeRobot v3 格式，带上 `observation.images.*`、`observation.state`、`action`、`task`，以及 `subtask_index` + `meta/subtasks.parquet`，并生成 `meta/stats.json`。
 2. 在 `simplememvla/benchmarks/` 下新建 spec（H、action_dim、state_dim、相机标签、历史窗口、robot_tag），然后注册到 `_REGISTRY`。
-3. 把 `scripts/train.sh` 里的 `case` 加上新 benchmark 的默认 batch 和 steps。
+3. 新建 `configs/train/<name>.yaml`：`_base_: base.yaml`，写上 `data.benchmark` 和默认 batch / steps。
 4. 参照现有 `*_sim/policy.py` 写闭环环境适配器。模型侧的所有元信息都可以从 checkpoint config 读取。

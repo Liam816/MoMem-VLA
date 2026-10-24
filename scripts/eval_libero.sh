@@ -1,32 +1,24 @@
 #!/usr/bin/env bash
+# usage: bash scripts/eval_libero.sh [config.yaml] [--flag value ...]
+#   default config: configs/eval/libero.yaml
+# Protocol knobs live in the YAML; trailing flags override it, e.g.
+#   CHECKPOINT=checkpoints/simplememvla_libero bash scripts/eval_libero.sh --task_suites libero_10
+# Env vars only describe the run: CHECKPOINT, GPUS (one worker per GPU; NUM_GPUS defaults to their
+# count), RUN_TAG / RUN_DIR / LOG_FILE, VIDEO_DIR (empty disables videos), MUJOCO_GL, PYBIN.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-CHECKPOINT="${CHECKPOINT:-./checkpoints/sft/simplememvla/libero_baseline}"
-TASK_SUITES="${TASK_SUITES:-}"
-TASKS="${TASKS:-}"
-EPISODES_PER_TASK="${EPISODES_PER_TASK:-50}"
-GROUP_SIZE="${GROUP_SIZE:-10}"
-EXECUTE_HORIZON="${EXECUTE_HORIZON:-8}"
-PIPELINED="${PIPELINED:-0}"
-MAX_STEPS="${MAX_STEPS:-0}"
-NUM_STEPS_WAIT="${NUM_STEPS_WAIT:-10}"
-NUM_DENOISING_STEPS="${NUM_DENOISING_STEPS:-10}"
-EVAL_TEMPERATURE="${EVAL_TEMPERATURE:-1.0}"
-MAX_REASONING_TOKENS="${MAX_REASONING_TOKENS:-256}"
-COMPUTE_DTYPE="${COMPUTE_DTYPE:-bfloat16}"
-ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-flash_attention_2}"
-
-GPU="${GPU:-0}"
-NUM_GPUS="${NUM_GPUS:-1}"
-GPUS="${GPUS:-$GPU}"
-
+CONFIG="$REPO_ROOT/configs/eval/libero.yaml"
+if [[ "${1:-}" == *.yaml || "${1:-}" == *.yml ]]; then CONFIG="$(realpath "$1")"; shift; fi
+CHECKPOINT="${CHECKPOINT:-}"
+GPUS="${GPUS:-${GPU:-0}}"
+IFS=, read -r -a _gpus <<< "$GPUS"
+NUM_GPUS="${NUM_GPUS:-${#_gpus[@]}}"
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
 RUN_DIR="${RUN_DIR:-$REPO_ROOT/logs/libero_sim/$RUN_TAG}"
 LOG_FILE="${LOG_FILE:-$RUN_DIR/eval.log}"
-VIDEO_DIR="${VIDEO_DIR:-$RUN_DIR/videos}"
-VIDEO_MAX_PER_TASK="${VIDEO_MAX_PER_TASK:-1}"
+VIDEO_DIR="${VIDEO_DIR-$RUN_DIR/videos}"
 
 PYBIN="${PYBIN:-python}"
 if ! "$PYBIN" -c "import torch, transformers, robosuite, libero" >/dev/null 2>&1; then
@@ -47,37 +39,17 @@ if [[ "$NUM_GPUS" == "1" && "$GPUS" != *,* && "$MUJOCO_GL" == "egl" ]]; then
 fi
 
 mkdir -p "$RUN_DIR"
-
-EXTRA_ARGS=()
-if [[ -n "$TASKS" ]]; then
-  EXTRA_ARGS+=(--tasks $TASKS)
-elif [[ -n "$TASK_SUITES" ]]; then
-  EXTRA_ARGS+=(--task_suites $TASK_SUITES)
-fi
-if [[ -n "$VIDEO_DIR" ]]; then
-  EXTRA_ARGS+=(--video_dir "$VIDEO_DIR" --video_max_per_task "$VIDEO_MAX_PER_TASK")
-fi
-if [[ "$PIPELINED" != "0" ]]; then
-  EXTRA_ARGS+=(--pipelined)
-fi
+echo "[eval_libero_sim] config : $CONFIG"
+echo "[eval_libero_sim] run dir: $RUN_DIR"
 
 cd "$REPO_ROOT"
 set +e
 "$PYBIN" -m libero_sim.eval_success \
-  --pretrained_checkpoint "$CHECKPOINT" \
-  --episodes_per_task "$EPISODES_PER_TASK" \
-  --group_size "$GROUP_SIZE" \
-  --execute_horizon "$EXECUTE_HORIZON" \
-  --max_steps "$MAX_STEPS" \
-  --num_steps_wait "$NUM_STEPS_WAIT" \
-  --num_denoising_steps "$NUM_DENOISING_STEPS" \
-  --eval_temperature "$EVAL_TEMPERATURE" \
-  --max_reasoning_tokens "$MAX_REASONING_TOKENS" \
-  --compute_dtype "$COMPUTE_DTYPE" \
-  --attn_implementation "$ATTN_IMPLEMENTATION" \
+  --config "$CONFIG" \
+  ${CHECKPOINT:+--pretrained_checkpoint "$CHECKPOINT"} \
   --num_gpus "$NUM_GPUS" \
   --log_file "$LOG_FILE" \
-  "${EXTRA_ARGS[@]}" \
+  ${VIDEO_DIR:+--video_dir "$VIDEO_DIR"} \
   "$@" 2>&1 | tee "$LOG_FILE"
 status=${PIPESTATUS[0]}
 set -e

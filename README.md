@@ -368,9 +368,11 @@ changes the configuration, not the mechanism.
 <summary><b>📁 Repository layout</b></summary>
 
 ```
-train.py                      # unified SFT entry point (--benchmark rmbench|robomme|mikasa|robomemarena|libero)
+train.py                      # unified SFT entry point (--config configs/train/<benchmark>.yaml)
 configs/
   sft_params.py               # Model/Data/Training arguments (benchmark-agnostic; specs fill defaults)
+  train/                      # training YAMLs: base.yaml + one per benchmark (+ memcache/ experiments)
+  eval/                       # closed-loop eval YAMLs per benchmark (+ openloop/)
   zero2.json ...              # DeepSpeed configs
 simplememvla/                 # core package
   benchmarks/                 # per-benchmark specs (dims, cameras, rates, dataset defaults)
@@ -385,7 +387,7 @@ mikasa_sim/                   # MIKASA-Robo closed-loop eval (benchmark vendored
 robomemarena_sim/             # RoboMemArena closed-loop eval (official scorers vendored at evaluation_benchmark/)
 libero_sim/                   # LIBERO closed-loop eval (LIBERO cloned by the install script)
 scripts/
-  train.sh                    # bash scripts/train.sh <benchmark>
+  train.sh                    # bash scripts/train.sh <benchmark|config.yaml> [--flag value ...]
   eval_<benchmark>.sh         # closed-loop success-rate eval per benchmark
   eval_<benchmark>_openloop.sh# open-loop (dataset replay) action-L1 + sub-task accuracy
   precollect_rmbench_seeds.sh # RMBench expert-solvable seed cache (a cache is already shipped)
@@ -486,23 +488,41 @@ huggingface-cli download yinchenghust/libero_lerobot --repo-type dataset \
 ```bash
 conda activate simplememvla-<benchmark>
 bash scripts/train.sh rmbench        # or robomme | mikasa | robomemarena | libero
+bash scripts/train.sh path/to/my_experiment.yaml
 ```
 
-`scripts/train.sh` reproduces each benchmark's published recipe: every dataset/pipeline
+Training is driven by YAML files under [`configs/train/`](configs/train/):
+`base.yaml` holds the shared recipe, and each `<benchmark>.yaml` extends it
+(`_base_: base.yaml`) with the benchmark name and its batch/step budget. Sections map
+one-to-one onto the argument dataclasses in `configs/sft_params.py` (`model:`, `data:`,
+`training:` = any `transformers.TrainingArguments` field). Every dataset/pipeline
 default (cameras, history window, variable-history, augmentation, sub-task supervision
-column) comes from the benchmark spec, and the script sets only launch/optimization knobs.
-Everything is env-overridable:
+column) still comes from the benchmark spec unless a `data:` key overrides it.
+
+Flags after the config override it, and env vars only describe the launch
+(`CUDA_VISIBLE_DEVICES`, `GPUS_PER_NODE`, `NNODES`, `NODE_RANK`, `MASTER_ADDR`,
+`MASTER_PORT`, `WANDB_*`):
 
 ```bash
 # fewer GPUs / smaller batch
-GPUS_PER_NODE=4 PER_DEVICE_BATCH=4 GRAD_ACCUM=2 bash scripts/train.sh libero
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/train.sh libero \
+  --per_device_train_batch_size 4 --gradient_accumulation_steps 2
 
 # a custom history window
-HISTORY_VIDEO_SEC=30 HISTORY_VIDEO_FPS=2 bash scripts/train.sh rmbench
+bash scripts/train.sh rmbench --history_video_sec 30 --history_video_fps 2
 
 # resume the latest checkpoint automatically (safe for auto-restarting jobs)
-RESUME=auto bash scripts/train.sh robomme
+bash scripts/train.sh robomme --resume auto
+
+# print the torchrun command without launching
+DRY_RUN=1 bash scripts/train.sh robomme
 ```
+
+Config files support `_base_: other.yaml` (or a list, merged in order), and
+`${VAR}` / `${VAR:-default}` expansion from the environment — e.g. `base.yaml` reads the
+backbone from `${BACKBONE:-Qwen/Qwen3.5-4B}`. `train.py --config a.yaml --config b.yaml`
+merges several files. The fully resolved arguments are written to
+`<output_dir>/train_config.yaml` at the start of every run.
 
 Notes:
 
@@ -510,8 +530,8 @@ Notes:
   warmup + cosine decay, driven deterministically from `global_step` (robust under multi-node
   DeepSpeed scheduler-stepping quirks). DeepSpeed ZeRO-2 by default (`configs/zero2.json`);
   use `configs/zero2_offload.json` / `zero3_offload.json` on small GPU counts.
-* The published step budgets assume a large multi-node global batch (~512); scale `MAX_STEPS`
-  up on a single node.
+* The published step budgets assume a large multi-node global batch (~512); scale
+  `max_steps` up on a single node.
 * The trainer copies the dataset's `meta/stats.json` into every checkpoint as `stats.json` —
   evaluation needs it.
 * Training only needs the *training* deps + fast-path kernels; simulators are not imported.
@@ -526,15 +546,15 @@ writes a run directory under `logs/` with a tee'd log, per-task/episode JSON and
 conda activate simplememvla-<benchmark>
 
 # RMBench: 10 tasks x 100 held-out expert-solvable seeds, batched SAPIEN group rollout
-CHECKPOINT=checkpoints/simplememvla_rmbench NUM_GPUS=8 GPUS=0,1,2,3,4,5,6,7 \
+CHECKPOINT=checkpoints/simplememvla_rmbench GPUS=0,1,2,3,4,5,6,7 \
   bash scripts/eval_rmbench.sh
 
 # RoboMME: 16 tasks x 50 frozen test episodes (conditioning demo replayed inside reset)
-CHECKPOINT=checkpoints/simplememvla_robomme NUM_GPUS=8 GPUS=0,1,2,3,4,5,6,7 \
+CHECKPOINT=checkpoints/simplememvla_robomme GPUS=0,1,2,3,4,5,6,7 \
   bash scripts/eval_robomme.sh
 
 # MIKASA-Robo: 5 tasks x 100 canonical seeds
-CHECKPOINT=checkpoints/simplememvla_mikasa NUM_GPUS=8 GPUS=0,1,2,3,4,5,6,7 \
+CHECKPOINT=checkpoints/simplememvla_mikasa GPUS=0,1,2,3,4,5,6,7 \
   bash scripts/eval_mikasa.sh
 
 # RoboMemArena: 26 memory tasks x 51 trials, official CSR/TSR scorers
@@ -542,19 +562,21 @@ bash scripts/eval_robomemarena.sh checkpoints/simplememvla_robomemarena
 python -m robomemarena_sim.report_by_category <out-root>   # per-category table
 
 # LIBERO: 4 suites x 10 tasks x 50 frozen init states
-CHECKPOINT=checkpoints/simplememvla_libero \
-  TASK_SUITES="libero_10 libero_goal libero_object libero_spatial" \
-  bash scripts/eval_libero.sh
+CHECKPOINT=checkpoints/simplememvla_libero bash scripts/eval_libero.sh
 ```
 
-Common knobs (all env vars): `EXECUTE_HORIZON` (receding horizon), `NUM_DENOISING_STEPS`
-(default 10), `GROUP_SIZE` (envs batched into one forward, where supported), `NUM_GPUS`/`GPUS`
-(sharded workers), `VIDEO_DIR` / `SAVE_VIDEOS` (rollout videos), `ATTN_IMPLEMENTATION=sdpa`
-(only on hosts without flash-attn). Smoke-test example:
+The protocol of each benchmark lives in [`configs/eval/<benchmark>.yaml`](configs/eval/)
+(its keys are the `eval_success.py` flags). Pass another YAML as the first argument
+(e.g. `bash scripts/eval_robomme.sh configs/eval/robomme_pipelined.yaml`), add
+`--config extra.yaml` to merge one on top, or append flags to override single keys:
+`--execute_horizon`, `--num_denoising_steps`, `--group_size`, `--tasks`, `--save_videos`,
+`--attn_implementation sdpa` (only on hosts without flash-attn), ... Env vars only describe
+the run: `CHECKPOINT`, `GPUS` (one worker per GPU; `NUM_GPUS` defaults to their count),
+`RUN_TAG`/`RUN_DIR`/`LOG_FILE`, `VIDEO_DIR` (empty disables videos). Smoke-test example:
 
 ```bash
-TASKS=observe_and_pickup SEEDS_PER_TASK=2 GROUP_SIZE=2 \
-  CHECKPOINT=checkpoints/simplememvla_rmbench bash scripts/eval_rmbench.sh
+CHECKPOINT=checkpoints/simplememvla_rmbench bash scripts/eval_rmbench.sh \
+  --tasks observe_and_pickup --seeds_per_task 2 --group_size 2
 ```
 
 A checkpoint directory is self-contained: the eval stacks rebuild the exact training-time
@@ -567,6 +589,8 @@ there are no eval-side pipeline flags to keep in sync.
 ```bash
 CHECKPOINT=<ckpt> bash scripts/eval_rmbench_openloop.sh      # likewise robomme/mikasa/libero
 ```
+
+(defaults in `configs/eval/openloop/<benchmark>.yaml`, overridable the same way).
 
 🦾 Real-Robot Deployment
 ------------------------
@@ -659,7 +683,8 @@ at the top are cropped from these recordings and play at 3x.*
 
 1. Add `simplememvla/benchmarks/<name>.py` with the configuration tuple (cameras, window,
    rate, horizon, dims) + a `BenchmarkSpec` (register it in
-   `simplememvla/benchmarks/__init__.py`). Training works immediately:
+   `simplememvla/benchmarks/__init__.py`), then a `configs/train/<name>.yaml` with
+   `_base_: base.yaml` and `data: {benchmark: <name>}`. Training works immediately:
    `bash scripts/train.sh <name>`.
 2. Convert your data to LeRobot v3 with `task`, per-frame `subtask` (via `subtask_index` +
    `meta/subtasks.parquet`), `action`, `observation.state`, camera videos, and MEAN_STD stats

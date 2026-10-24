@@ -1,0 +1,5 @@
+# RoboMME with pipelined decisions; the window must slide one temporal patch per
+# decision, so execute_horizon = 2 * stride = 20.
+_base_: robomme.yaml
+pipelined: true
+execute_horizon: 20

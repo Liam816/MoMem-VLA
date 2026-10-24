@@ -1,0 +1,11 @@
+_base_: base.yaml
+
+data:
+  benchmark: mikasa
+
+training:
+  run_name: mikasa_baseline
+  output_dir: ./checkpoints/sft/simplememvla/mikasa_baseline
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  max_steps: 30000

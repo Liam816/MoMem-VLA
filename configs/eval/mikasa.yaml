@@ -1,0 +1,15 @@
+# MIKASA-Robo closed-loop protocol (mikasa_sim/eval_success.py): 5 tasks x 100 canonical seeds.
+# Keys are the eval_success.py flags; CLI flags override them.
+pretrained_checkpoint: ./checkpoints/sft/simplememvla/mikasa_baseline
+tasks: null                # null = the 5 MemoryVLA-paper tasks
+n_episodes: 100
+start_seed: null           # null = the benchmark's canonical START_SEED
+execute_horizon: 8
+decision_path: pipelined   # pipelined | recompute
+num_denoising_steps: 10
+eval_temperature: 1.0
+max_subtask_tokens: 64
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2
+control_mode: pd_joint_pos
+save_videos: false

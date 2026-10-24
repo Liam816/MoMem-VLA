@@ -1,0 +1,9 @@
+# E1: single frame, no memory (lower bound)
+_base_: base.yaml
+
+model:
+  use_memory: false
+
+training:
+  run_name: robomme_small_E1
+  output_dir: ./checkpoints/mem/robomme_small_E1

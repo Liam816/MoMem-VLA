@@ -17,6 +17,7 @@ from transformers import AutoProcessor
 
 from rmbench_sim.policy import RMBenchPolicy, get_vla
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+from simplememvla.config import parse_args_with_config
 from simplememvla.benchmarks.rmbench import NUM_ACTIONS_CHUNK
 
 
@@ -46,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         help="Backbone attention backend (default flash_attention_2, matching training; "
              "use sdpa on a host without flash-attn).",
     )
-    return parser.parse_args()
+    return parse_args_with_config(parser)
 
 
 def _to_uint8_hwc(img) -> np.ndarray:

@@ -18,6 +18,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from simplememvla.config import parse_args_with_config
 from simplememvla.data.messages import derive_video_sampling
 from simplememvla.benchmarks.robomemarena import IMAGE_SIZE
 
@@ -739,7 +740,7 @@ def _preflight(args: argparse.Namespace, ckpt: Path) -> None:
 
 
 def main() -> int:
-    args = build_argparser().parse_args()
+    args = parse_args_with_config(build_argparser())
     out_root = Path(args.out_root)
 
     if args.aggregate_only:

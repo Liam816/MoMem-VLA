@@ -1,0 +1,19 @@
+# RoboMemArena closed-loop protocol (robomemarena_sim/eval_success.py): 26 memory tasks x 51 trials.
+# Keys are the eval_success.py flags (dashes or underscores); CLI flags override them.
+# checkpoint / out_root are passed by scripts/eval_robomemarena.sh.
+task_start: 1
+task_end: 26
+num_trials_per_task: 51
+seed: 50
+max_steps: 2500
+replan_steps: 10
+num_steps_wait: 10
+num_denoising_steps: 10
+max_reasoning_tokens: 256
+attn_implementation: flash_attention_2
+gpus: "0,1,2,3,4,5,6,7"
+workers_per_gpu: 1
+episodes_per_shard: 0      # 0 = one shard per task
+log_every: 0
+seed_policy: true
+resume: true
