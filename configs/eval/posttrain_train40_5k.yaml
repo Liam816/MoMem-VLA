@@ -1,0 +1,37 @@
+schema_version: 1
+expected_step: 5000
+episodes_json: configs/eval/robomme_train40_episode_ids.json
+baseline_errors: /mnt/cpfs/heping/SimpleMemVLA-data/output/fullpretrain_sf_posttrain_20261025_v1/action_error_step1000_20261025_215329
+baseline_success: /mnt/cpfs/heping/SimpleMemVLA-data/output/fullpretrain_sf_posttrain_20261025_v1/eval_step1000_train40_20261025_201803
+experiments:
+  E1:
+    checkpoint: /mnt/cpfs/heping/SimpleMemVLA-data/output/fullpretrain_sf_posttrain_20261025_v1/E1_fullpretrain_sf_20261025_v1/checkpoint-5000
+  E2:
+    checkpoint: /mnt/cpfs/heping/SimpleMemVLA-data/output/fullpretrain_sf_posttrain_20261025_v1/E2_fullpretrain_sf_naivecache_20261025_v1/checkpoint-5000
+protocol:
+  dataset_root: /mnt/cpfs/heping/SimpleMemVLA-data/datasets/yinchenghust/robomme_lerobot
+  feature_dir: /mnt/cpfs/heping/SimpleMemVLA-data/features/robomme_released_fp32_sfpost_20261025_v1
+  episode_bases:
+    PickXtimes: 700
+    VideoUnmaskSwap: 1500
+    VideoRepick: 1300
+    PatternLock: 500
+  batch_size: 4
+  stride: 16
+  expected_samples: 872
+  flow_seed: 90000
+  action_seed: 20000
+  dataset_split: train
+  group_size: 5
+  current_frame_only: true
+  fail_on_env_error: true
+  execute_horizon: 16
+  max_steps: 1300
+  num_denoising_steps: 10
+  eval_temperature: 1.0
+  max_subtask_tokens: 64
+  compute_dtype: bfloat16
+  attn_implementation: flash_attention_2
+  pipelined: false
+  video_max_per_task: 1
+  worker_timeout: 21600.0

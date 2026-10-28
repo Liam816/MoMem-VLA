@@ -1,0 +1,2 @@
+_base_: posttrain_valtest_common.yaml
+checkpoint: /mnt/cpfs/heping/SimpleMemVLA-data/output/fullpretrain_sf_50k_fast_uniform_20261026_v2/e1_5w_iter/checkpoint-16250

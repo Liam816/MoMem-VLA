@@ -1,0 +1,30 @@
+schema_version: 1
+output_root: /mnt/cpfs/heping/SimpleMemVLA-data/output/robomme_valtest
+tasks: [PickXtimes, VideoUnmaskSwap, VideoRepick, PatternLock]
+heldout_validation:
+  train_episodes: /mnt/cpfs/heping/SimpleMemVLA-data/splits/robomme_small_train.txt
+  val_episodes: /mnt/cpfs/heping/SimpleMemVLA-data/splits/robomme_small_val.txt
+  episode_bases: {PickXtimes: 700, VideoUnmaskSwap: 1500, VideoRepick: 1300, PatternLock: 500}
+protocol:
+  group_size: 5
+  current_frame_only: true
+  fail_on_env_error: true
+  execute_horizon: 16
+  max_steps: 1300
+  num_denoising_steps: 10
+  eval_temperature: 1.0
+  max_subtask_tokens: 64
+  compute_dtype: bfloat16
+  attn_implementation: flash_attention_2
+  pipelined: false
+  video_max_per_task: 1
+  worker_timeout: 21600.0
+evaluations:
+  val40:
+    # Internal held-out episodes of the official TRAIN split; not official val.
+    dataset_split: train
+    episodes_per_task: 10
+    episode_ids_json: configs/eval/robomme_heldout_val40_episode_ids.json
+  test200:
+    dataset_split: test
+    episodes_per_task: 50
