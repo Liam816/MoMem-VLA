@@ -1,0 +1,16 @@
+# Released weights; remove temporal history only, retain the video/sub-task interface.
+_base_: robomme.yaml
+tasks: [PickXtimes, VideoUnmaskSwap, VideoRepick, PatternLock]
+current_frame_only: true
+group_size: 5
+fail_on_env_error: true
+execute_horizon: 16
+max_steps: 1300
+num_denoising_steps: 10
+eval_temperature: 1.0
+max_subtask_tokens: 64
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2
+pipelined: false
+video_max_per_task: 1
+worker_timeout: 21600.0
