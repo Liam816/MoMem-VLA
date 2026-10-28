@@ -133,6 +133,14 @@ class SFTTrainingArguments(TrainingArguments):
     save_steps: int = field(default=3000)
     logging_steps: int = field(default=10)
     save_total_limit: int = field(default=3)
+    save_first_fraction: Optional[float] = field(
+        default=None,
+        metadata={"help": "First checkpoint fraction in (0,1]; pair with save_num_checkpoints to replace periodic saves"},
+    )
+    save_num_checkpoints: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of evenly spaced complete checkpoints, including first fraction and final update"},
+    )
 
     bf16: bool = field(default=True)
     fp16: bool = field(default=False)
@@ -174,6 +182,31 @@ class SFTTrainingArguments(TrainingArguments):
                 kwargs["min_lr_rate"] = 0.1
             self.lr_scheduler_kwargs = kwargs
         self.resume = self._normalize_resume(self.resume)
+        from simplememvla.training.checkpoint_schedule import validate_checkpoint_schedule, build_checkpoint_steps
+
+        if validate_checkpoint_schedule(self.save_first_fraction, self.save_num_checkpoints):
+            if self.max_steps > 0:
+                build_checkpoint_steps(self.max_steps, self.save_first_fraction, self.save_num_checkpoints)
+            strategy = getattr(self.save_strategy, "value", self.save_strategy)
+            if strategy == "best" or self.load_best_model_at_end:
+                raise ValueError(
+                    "Uniform checkpoints cannot be combined with save_strategy=best "
+                    "or load_best_model_at_end; use the explicit progress schedule."
+                )
+            # Epoch/step training budget is independent of this save strategy.
+            # The callback supplies exact absolute update steps instead of a period.
+            from transformers.trainer_utils import SaveStrategy
+            self.save_strategy = SaveStrategy.STEPS
+            if self.save_only_model:
+                raise ValueError("Uniform checkpoints require save_only_model=False for optimizer/RNG resume")
+            if self.save_total_limit is not None and 0 < self.save_total_limit < self.save_num_checkpoints:
+                import warnings
+                warnings.warn(
+                    f"Raising save_total_limit from {self.save_total_limit} to "
+                    f"{self.save_num_checkpoints} to retain all scheduled checkpoints.",
+                    UserWarning,
+                )
+                self.save_total_limit = self.save_num_checkpoints
 
     @staticmethod
     def _normalize_resume(value):

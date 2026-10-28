@@ -1,5 +1,7 @@
 import functools
 import math
+import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from transformers import Trainer
 from transformers.trainer import get_last_checkpoint
 
 from simplememvla.model.modeling_simplememvla import sample_flow_timesteps
+from simplememvla.training.checkpoint_schedule import UniformCheckpointCallback, build_checkpoint_steps
 
 
 def _permit_trusted_torch_load() -> None:
@@ -92,6 +95,8 @@ class SimpleMemVLATrainer(Trainer):
         self.stats_path = stats_path
         self._metric_sums = {"action_loss": 0.0, "vl_loss": 0.0, "mem_norm": 0.0}
         self._metric_count = 0
+        if getattr(self.args, "save_first_fraction", None) is not None:
+            self.add_callback(UniformCheckpointCallback())
 
     def _get_train_sampler(self, train_dataset=None):
         train_dataset = train_dataset if train_dataset is not None else self.train_dataset
@@ -321,6 +326,42 @@ class SimpleMemVLATrainer(Trainer):
             for i, group in enumerate(self.optimizer.param_groups):
                 logs[f"lr/{group.get('name', i)}"] = group["lr"]
         return super().log(logs, *args, **kwargs)
+
+    def _save_checkpoint(self, model, trial):
+        if getattr(self.args, "save_first_fraction", None) is None:
+            return super()._save_checkpoint(model, trial)
+        # HF 5.13 rotates via a module-level function, not a Trainer method.
+        # Keep the complete normal save path and replace only its retention.
+        limit = self.args.save_total_limit
+        self.args.save_total_limit = None
+        try:
+            super()._save_checkpoint(model, trial)
+        finally:
+            self.args.save_total_limit = limit
+        if self.args.should_save:
+            self._rotate_uniform_checkpoints(self._get_output_dir(trial=trial))
+
+    def _rotate_uniform_checkpoints(self, output_dir):
+        from transformers.trainer_utils import sort_checkpoints
+
+        limit = self.args.save_total_limit
+        if limit is None or limit <= 0:
+            return
+        checkpoints = [path for path in sort_checkpoints(output_dir=output_dir, use_mtime=False)
+                       if re.fullmatch(r"checkpoint-\d+", Path(path).name)]
+        protected = set(build_checkpoint_steps(
+            self.state.max_steps, self.args.save_first_fraction, self.args.save_num_checkpoints
+        ))
+        excess = len(checkpoints) - limit
+        for checkpoint in checkpoints:
+            if excess <= 0:
+                break
+            step = int(Path(checkpoint).name.rsplit("-", 1)[-1])
+            if step in protected:
+                continue
+            logging.getLogger(__name__).info("Deleting non-scheduled checkpoint %s", checkpoint)
+            shutil.rmtree(checkpoint, ignore_errors=True)
+            excess -= 1
 
     def _save(self, output_dir=None, state_dict=None):
         super()._save(output_dir=output_dir, state_dict=state_dict)
