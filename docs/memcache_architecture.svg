@@ -1,0 +1,223 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1080" width="1400" height="1080" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6B7280"/></marker>
+    <marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3B6FB6"/></marker>
+    <marker id="a-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E9A55"/></marker>
+    <marker id="a-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#E07B24"/></marker>
+    <marker id="a-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7A4CC2"/></marker>
+    <marker id="a-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B88A00"/></marker>
+    <marker id="a-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#D04A4A"/></marker>
+    <style>
+      .t  { font-size: 13px; fill: #1F2937; }
+      .ts { font-size: 11.5px; fill: #4B5563; }
+      .tb { font-size: 14px; font-weight: 700; fill: #111827; }
+      .th { font-size: 16px; font-weight: 700; }
+      .mono { font-family: Menlo, Consolas, monospace; font-size: 12px; fill: #1F2937; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="1080" fill="#FFFFFF"/>
+
+  <!-- title -->
+  <text x="20" y="34" font-size="22" font-weight="700" fill="#111827">SimpleMemVLA + 历史 Vision-Token Cache（E2）</text>
+  <text x="20" y="56" class="t">冻结的 VLM 只看当前帧；历史帧的 ViT token 存进 cache，经 Memory 分支压成定长特征，再通过 adaLN 注入从头训练的 DiT</text>
+
+  <!-- ================= inputs (current step) ================= -->
+  <rect x="20" y="95" width="230" height="46" rx="8" fill="#FFF7D6" stroke="#C9A227" stroke-width="1.5"/>
+  <text x="135" y="115" text-anchor="middle" class="tb">本体状态 s_t（8 维）</text>
+  <text x="135" y="132" text-anchor="middle" class="ts">关节位置 + 夹爪，均值方差归一化</text>
+
+  <rect x="20" y="160" width="230" height="46" rx="8" fill="#EEF5FF" stroke="#6A8FD0" stroke-width="1.5"/>
+  <text x="135" y="180" text-anchor="middle" class="tb">当前帧 · front 相机</text>
+  <text x="135" y="197" text-anchor="middle" class="ts">单张 image（不是历史视频）256×256</text>
+
+  <rect x="20" y="216" width="230" height="46" rx="8" fill="#EEF5FF" stroke="#6A8FD0" stroke-width="1.5"/>
+  <text x="135" y="236" text-anchor="middle" class="tb">当前帧 · wrist 相机</text>
+  <text x="135" y="253" text-anchor="middle" class="ts">单张 image 256×256</text>
+
+  <rect x="20" y="272" width="230" height="70" rx="8" fill="#EEF5FF" stroke="#6A8FD0" stroke-width="1.5"/>
+  <text x="135" y="292" text-anchor="middle" class="tb">文本 prompt</text>
+  <text x="135" y="310" text-anchor="middle" class="ts">机器人 / 控制频率 / 任务指令</text>
+  <text x="135" y="327" text-anchor="middle" class="ts">"Predict the next 30 control actions."</text>
+
+  <!-- ================= frozen VLM ================= -->
+  <rect x="285" y="78" width="410" height="330" rx="12" fill="#F3F7FD" stroke="#3B6FB6" stroke-width="2"/>
+  <text x="305" y="104" class="th" fill="#1F3B63">冻结 VLM · 原版 Qwen3.5-4B</text>
+  <rect x="590" y="88" width="90" height="24" rx="12" fill="#3B6FB6"/>
+  <text x="635" y="105" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">冻结 · 不训练</text>
+  <text x="305" y="126" class="ts">Qwen/Qwen3.5-4B（rev 851bf6e），未经任何机器人数据微调</text>
+
+  <rect x="305" y="150" width="180" height="70" rx="8" fill="#E1EAF8" stroke="#3B6FB6" stroke-width="1.5"/>
+  <text x="395" y="174" text-anchor="middle" class="tb">ViT + merger</text>
+  <text x="395" y="193" text-anchor="middle" class="t">24 层 · patch 16 · 2×2 合并</text>
+  <text x="395" y="210" text-anchor="middle" class="t">→ 64 tok / 图 × 2560</text>
+
+  <rect x="500" y="150" width="175" height="70" rx="8" fill="#FFFFFF" stroke="#9DB4DA" stroke-dasharray="4 3"/>
+  <text x="587" y="174" text-anchor="middle" class="ts">LLM 输入序列（约 219 token）</text>
+  <text x="587" y="192" text-anchor="middle" class="ts">相机标签 | front 64 | wrist 64</text>
+  <text x="587" y="209" text-anchor="middle" class="ts">| prompt 文本 | assistant 起始</text>
+
+  <rect x="305" y="245" width="370" height="64" rx="8" fill="#E1EAF8" stroke="#3B6FB6" stroke-width="1.5"/>
+  <text x="490" y="270" text-anchor="middle" class="tb">LLM decoder · 32 层</text>
+  <text x="490" y="290" text-anchor="middle" class="t">3 linear-attn : 1 full-attn，因果注意力，M-RoPE</text>
+
+  <rect x="305" y="327" width="370" height="66" rx="8" fill="#DCE8FA" stroke="#3B6FB6" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="317" y="347" class="tb" fill="#1F3B63">送给 DiT 的条件（不生成 sub-task）</text>
+  <text x="317" y="366" class="t">H：所有有效 token 的 last hidden（L≈219 × 2560）</text>
+  <text x="317" y="384" class="t">E：token embedding · 位置：VLM 的 M-RoPE</text>
+
+  <!-- arrows into / inside VLM -->
+  <path d="M250,183 L303,180" stroke="#6A8FD0" stroke-width="1.8" fill="none" marker-end="url(#a-blue)"/>
+  <path d="M250,239 L303,202" stroke="#6A8FD0" stroke-width="1.8" fill="none" marker-end="url(#a-blue)"/>
+  <path d="M250,307 L303,282" stroke="#6A8FD0" stroke-width="1.8" fill="none" marker-end="url(#a-blue)"/>
+  <path d="M395,220 L395,243" stroke="#3B6FB6" stroke-width="1.8" fill="none" marker-end="url(#a-blue)"/>
+  <text x="402" y="237" class="ts">替换 image pad</text>
+  <path d="M490,309 L490,325" stroke="#3B6FB6" stroke-width="1.8" fill="none" marker-end="url(#a-blue)"/>
+
+  <!-- ================= history / cache ================= -->
+  <text x="20" y="452" class="th" fill="#1E6B3A">历史路径</text>
+  <line x1="100" y1="447" x2="695" y2="447" stroke="#BFE3CB" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+  <rect x="20" y="470" width="230" height="92" rx="8" fill="#E8F6EC" stroke="#2E9A55" stroke-width="1.5"/>
+  <text x="135" y="492" text-anchor="middle" class="tb">历史 front 帧</text>
+  <text x="135" y="511" text-anchor="middle" class="t">每 0.5 s 取 1 帧（2 fps 网格）</text>
+  <text x="135" y="529" text-anchor="middle" class="t">最近 60 s，K ≤ 120 帧</text>
+  <text x="135" y="547" text-anchor="middle" class="ts">含 RoboMME 的 demo 回放帧</text>
+
+  <rect x="285" y="470" width="190" height="92" rx="8" fill="#E1EAF8" stroke="#3B6FB6" stroke-width="1.5"/>
+  <text x="380" y="494" text-anchor="middle" class="tb">同一个冻结 ViT</text>
+  <text x="380" y="513" text-anchor="middle" class="t">离线预抽取（原版 Qwen ViT）</text>
+  <text x="380" y="531" text-anchor="middle" class="t">每帧当作单张 image</text>
+  <text x="380" y="549" text-anchor="middle" class="t">→ 64 tok × 2560</text>
+
+  <rect x="505" y="462" width="190" height="108" rx="8" fill="#D6F0DF" stroke="#2E9A55" stroke-width="2"/>
+  <text x="600" y="486" text-anchor="middle" class="tb" fill="#1E6B3A">Vision-Token Cache</text>
+  <text x="600" y="506" text-anchor="middle" class="t">K × 16 tok × 2560</text>
+  <text x="600" y="524" text-anchor="middle" class="t">8×8 → 4×4 平均池化</text>
+  <text x="600" y="542" text-anchor="middle" class="t">+ 帧龄 age_k = t − t_k（秒）</text>
+  <text x="600" y="560" text-anchor="middle" class="ts">features/*.npy，按锚点切片</text>
+
+  <path d="M250,516 L283,516" stroke="#2E9A55" stroke-width="1.8" fill="none" marker-end="url(#a-green)"/>
+  <path d="M475,516 L503,516" stroke="#2E9A55" stroke-width="1.8" fill="none" marker-end="url(#a-green)"/>
+
+  <!-- ================= memory branch (trainable) ================= -->
+  <rect x="285" y="594" width="410" height="326" rx="12" fill="#FFF6EE" stroke="#E07B24" stroke-width="2"/>
+  <text x="305" y="620" class="th" fill="#9A4A0B">Memory 分支</text>
+  <rect x="425" y="604" width="220" height="24" rx="12" fill="#E07B24"/>
+  <text x="535" y="621" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">可训练 · 126M · 随机初始化</text>
+
+  <rect x="305" y="638" width="370" height="50" rx="8" fill="#FFE7D1" stroke="#E07B24" stroke-width="1.5"/>
+  <text x="490" y="659" text-anchor="middle" class="tb">输入投影：LN + Linear 2560 → 1024</text>
+  <text x="490" y="678" text-anchor="middle" class="t">+ 空间位置（16）+ 帧龄嵌入（sin/cos → MLP）</text>
+
+  <rect x="305" y="702" width="370" height="50" rx="8" fill="#FFE7D1" stroke="#E07B24" stroke-width="1.5"/>
+  <text x="490" y="723" text-anchor="middle" class="tb">Memory Transformer · 4 层双向 · d=1024</text>
+  <text x="490" y="742" text-anchor="middle" class="t">对整段 cache 做 self-attn（≤ 1920 token，pad 掩码）</text>
+
+  <rect x="305" y="766" width="370" height="50" rx="8" fill="#FFE7D1" stroke="#E07B24" stroke-width="1.5"/>
+  <text x="490" y="787" text-anchor="middle" class="tb">Perceiver 压缩 · 16 个可学习 query · 2 层</text>
+  <text x="490" y="806" text-anchor="middle" class="t">cross-attn + self-attn → Z ∈ ℝ^(16×1024)（定长）</text>
+
+  <rect x="305" y="830" width="370" height="76" rx="8" fill="#F1E8FB" stroke="#7A4CC2" stroke-width="1.5"/>
+  <text x="490" y="852" text-anchor="middle" class="tb" fill="#4B2A86">融合 MLP g（E2：adaln_add）</text>
+  <text x="490" y="871" text-anchor="middle" class="t">flatten(Z) → Linear → SiLU → Linear（末层零初始化）</text>
+  <text x="490" y="891" text-anchor="middle" class="tb" fill="#4B2A86">→ m ∈ ℝ^2048</text>
+
+  <path d="M660,570 L660,636" stroke="#2E9A55" stroke-width="1.8" fill="none" marker-end="url(#a-green)"/>
+  <path d="M490,688 L490,700" stroke="#E07B24" stroke-width="1.8" fill="none" marker-end="url(#a-orange)"/>
+  <path d="M490,752 L490,764" stroke="#E07B24" stroke-width="1.8" fill="none" marker-end="url(#a-orange)"/>
+  <path d="M490,816 L490,828" stroke="#E07B24" stroke-width="1.8" fill="none" marker-end="url(#a-orange)"/>
+
+  <!-- ================= DiT (trainable, from scratch) ================= -->
+  <rect x="740" y="78" width="640" height="842" rx="12" fill="#FFF8F2" stroke="#E07B24" stroke-width="2"/>
+  <text x="760" y="104" class="th" fill="#9A4A0B">DiT Action Head · 16 层 · d=2048</text>
+  <rect x="1150" y="88" width="215" height="24" rx="12" fill="#E07B24"/>
+  <text x="1257" y="105" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">可训练 · 从头初始化 · 1.17B</text>
+  <text x="760" y="128" class="ts">flow matching；不加载任何 SimpleMemVLA checkpoint</text>
+
+  <text x="760" y="152" class="tb">输入 token 序列（双向 self-attention）</text>
+  <rect x="760" y="162" width="300" height="80" rx="8" fill="#DCE8FA" stroke="#3B6FB6" stroke-width="1.8"/>
+  <text x="910" y="184" text-anchor="middle" class="tb" fill="#1F3B63">① cond tokens × L</text>
+  <text x="910" y="204" text-anchor="middle" class="t">L2norm(W_h·H) + W_e·E + type</text>
+  <text x="910" y="223" text-anchor="middle" class="t">位置 = VLM 的 M-RoPE</text>
+
+  <rect x="1070" y="162" width="104" height="80" rx="8" fill="#FFF7D6" stroke="#C9A227" stroke-width="1.8"/>
+  <text x="1122" y="184" text-anchor="middle" class="tb" fill="#6B5200">② state × 1</text>
+  <text x="1122" y="204" text-anchor="middle" class="t">W_s·s_t</text>
+  <text x="1122" y="223" text-anchor="middle" class="t">+ type</text>
+
+  <rect x="1184" y="162" width="180" height="80" rx="8" fill="#FDE2E2" stroke="#D04A4A" stroke-width="1.8"/>
+  <text x="1274" y="184" text-anchor="middle" class="tb" fill="#8A1F1F">③ 加噪动作 × 30</text>
+  <text x="1274" y="204" text-anchor="middle" class="t">MLP(a_τ) + type + pos</text>
+  <text x="1274" y="223" text-anchor="middle" class="ts">a_τ = (1−τ)·a + τ·ε</text>
+
+  <!-- block stack -->
+  <rect x="796" y="296" width="560" height="238" rx="10" fill="#FFE7D1" stroke="#E07B24" stroke-width="1"/>
+  <rect x="788" y="288" width="560" height="238" rx="10" fill="#FFE7D1" stroke="#E07B24" stroke-width="1"/>
+  <rect x="780" y="280" width="560" height="238" rx="10" fill="#FFF1E3" stroke="#E07B24" stroke-width="1.8"/>
+  <text x="800" y="306" class="tb">DiT block × 16（adaLN-Zero）</text>
+  <text x="800" y="336" class="mono">(shift, scale, gate)₁,₂ = Linear(SiLU(c))</text>
+  <text x="800" y="362" class="mono">x ← x + gate₁ · Attn( LN(x)·(1+scale₁) + shift₁ )</text>
+  <text x="800" y="388" class="mono">x ← x + gate₂ · MLP ( LN(x)·(1+scale₂) + shift₂ )</text>
+  <text x="800" y="420" class="t">Attn：对 [cond | state | action] 做双向全注意力，</text>
+  <text x="800" y="439" class="t">用和 Qwen 对齐的交错 M-RoPE；MLP 2048 → 7168 → 2048</text>
+  <text x="800" y="470" class="t">token 只经 self-attn 交互；c 是每个样本一个的全局向量，</text>
+  <text x="800" y="489" class="t">对所有 token 做同样的仿射调制</text>
+
+  <path d="M1060,242 L1060,278" stroke="#6B7280" stroke-width="1.8" fill="none" marker-end="url(#a-gray)"/>
+
+  <!-- adaLN condition -->
+  <rect x="780" y="560" width="310" height="84" rx="8" fill="#F1E8FB" stroke="#7A4CC2" stroke-width="2"/>
+  <text x="935" y="582" text-anchor="middle" class="tb" fill="#4B2A86">④ adaLN 条件向量 c ∈ ℝ^2048</text>
+  <text x="935" y="604" text-anchor="middle" class="t" font-weight="700">c = TimestepEmb(τ) + m</text>
+  <text x="935" y="624" text-anchor="middle" class="ts">m 是历史信息进入 DiT 的唯一入口</text>
+  <text x="935" y="639" text-anchor="middle" class="ts">E1 没有 memory 分支：c = TimestepEmb(τ)</text>
+  <path d="M935,560 L935,522" stroke="#7A4CC2" stroke-width="2.2" fill="none" marker-end="url(#a-purple)"/>
+  <text x="945" y="547" class="ts" fill="#4B2A86">调制每个 block 和 final layer</text>
+
+  <rect x="780" y="660" width="310" height="44" rx="8" fill="#F3F4F6" stroke="#6B7280" stroke-width="1.5"/>
+  <text x="935" y="679" text-anchor="middle" class="tb">flow 时间步 τ</text>
+  <text x="935" y="696" text-anchor="middle" class="ts">训练 τ ~ Beta(1.5, 1)；推理 1 → 0 共 10 步</text>
+  <path d="M935,660 L935,646" stroke="#6B7280" stroke-width="1.8" fill="none" marker-end="url(#a-gray)"/>
+
+  <!-- output -->
+  <path d="M1230,526 L1230,722" stroke="#6B7280" stroke-width="1.8" fill="none" marker-end="url(#a-gray)"/>
+  <rect x="780" y="724" width="584" height="46" rx="8" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5"/>
+  <text x="1072" y="744" text-anchor="middle" class="tb">final layer（adaLN）→ 只取 30 个动作 token → v_θ ∈ ℝ^(30×8)</text>
+  <text x="1072" y="762" text-anchor="middle" class="ts">预测速度场；推理时 a ← a − Δτ·v_θ 做 Euler 积分</text>
+  <rect x="780" y="782" width="584" height="40" rx="8" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5"/>
+  <text x="1072" y="807" text-anchor="middle" class="t">L = ‖ v_θ − (ε − a) ‖²（按 action mask 平均），VL loss = 0</text>
+
+  <!-- E3 variant -->
+  <rect x="780" y="838" width="584" height="66" rx="8" fill="#FFFFFF" stroke="#E07B24" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="792" y="860" class="tb" fill="#9A4A0B">E3 变体（prefix_tokens）</text>
+  <text x="792" y="879" class="t">Z → Linear → 16 个 memory token，插在 ① 和 ② 之间参与 self-attn；</text>
+  <text x="792" y="897" class="t">c 中不再加 m（c = TimestepEmb(τ)）</text>
+
+  <!-- ================= cross-module arrows ================= -->
+  <!-- VLM condition -> cond tokens -->
+  <path d="M675,345 C720,345 712,206 758,206" stroke="#3B6FB6" stroke-width="2.4" fill="none" marker-end="url(#a-blue)"/>
+  <text x="700" y="268" class="ts" fill="#1F3B63" transform="rotate(-72 700 268)">H, E, 位置</text>
+  <!-- state -> state token (routed above) -->
+  <path d="M250,118 L266,118 L266,68 L1122,68 L1122,160" stroke="#B88A00" stroke-width="2" fill="none" marker-end="url(#a-gold)"/>
+  <text x="840" y="63" class="ts" fill="#6B5200">s_t 直接进 DiT，不经过 VLM</text>
+  <!-- m -> c -->
+  <path d="M675,891 C726,891 730,602 778,602" stroke="#7A4CC2" stroke-width="2.6" fill="none" marker-end="url(#a-purple)"/>
+  <text x="706" y="760" class="ts" fill="#4B2A86" font-weight="700" transform="rotate(-82 706 760)">m（2048）</text>
+  <!-- E3: Z -> memory tokens (dashed) -->
+  <path d="M675,791 C730,791 728,870 778,870" stroke="#E07B24" stroke-width="1.6" stroke-dasharray="6 4" fill="none" marker-end="url(#a-orange)"/>
+
+  <!-- ================= legend ================= -->
+  <rect x="20" y="940" width="1360" height="128" rx="10" fill="#F9FAFB" stroke="#D1D5DB"/>
+  <text x="38" y="966" class="tb">图例</text>
+  <rect x="38" y="980" width="22" height="14" rx="3" fill="#E1EAF8" stroke="#3B6FB6"/><text x="68" y="992" class="t">冻结（原版 Qwen3.5-4B）</text>
+  <rect x="38" y="1004" width="22" height="14" rx="3" fill="#FFE7D1" stroke="#E07B24"/><text x="68" y="1016" class="t">可训练（从头初始化）</text>
+  <rect x="38" y="1028" width="22" height="14" rx="3" fill="#D6F0DF" stroke="#2E9A55"/><text x="68" y="1040" class="t">离线数据 / cache（不训练）</text>
+  <line x1="38" y1="1056" x2="60" y2="1056" stroke="#7A4CC2" stroke-width="2.6"/><text x="68" y="1060" class="t">adaLN 条件通路</text>
+
+  <text x="330" y="966" class="tb">DiT 实际用到的信息（只有这四路）</text>
+  <text x="330" y="988" class="t"><tspan font-weight="700" fill="#1F3B63">① cond tokens：</tspan>冻结 VLM 对"当前两帧 + 文本 prompt"的 last hidden H 和 token embedding E（不含任何历史）</text>
+  <text x="330" y="1008" class="t"><tspan font-weight="700" fill="#6B5200">② state token：</tspan>当前本体状态 s_t</text>
+  <text x="330" y="1028" class="t"><tspan font-weight="700" fill="#8A1F1F">③ 动作 token：</tspan>加噪动作 a_τ（DiT 预测它的速度场）</text>
+  <text x="330" y="1048" class="t"><tspan font-weight="700" fill="#4B2A86">④ adaLN 条件 c：</tspan>flow 时间步 τ + memory 向量 m。DiT 看不到原始历史帧，历史只经 m 进入；E3 改为把 16 个 memory token 放进序列</text>
+</svg>
