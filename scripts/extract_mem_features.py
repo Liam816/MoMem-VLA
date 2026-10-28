@@ -44,7 +44,10 @@ VISUAL_PREFIX = "backbone.model.visual."
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--checkpoint", required=True, help="SimpleMemVLA checkpoint dir")
+    parser.add_argument(
+        "--checkpoint", required=True,
+        help="SimpleMemVLA checkpoint dir, or a plain HF backbone dir (e.g. Qwen3.5-4B) -- must be the VLM you train with",
+    )
     parser.add_argument("--benchmark", required=True)
     parser.add_argument("--root", default=None, help="LeRobot dataset root (default: spec)")
     parser.add_argument("--camera_key", default=None, help="default: the spec's history camera")
@@ -55,14 +58,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--num_shards", type=int, default=1)
-    parser.add_argument("--attn_implementation", default="flash_attention_2")
+    parser.add_argument("--attn_implementation", default="flash_attention_2",
+                        help="used for bfloat16; float32 always runs sdpa (flash-attn has no fp32)")
+    parser.add_argument(
+        "--vit_dtype", choices=["float32", "bfloat16"], default="float32",
+        help="Precision of the vision tower. bf16 features depend on the batch shape (the "
+             "original Qwen3.5-4B ViT has tokens whose bf16 output moves by cos~0.7 between "
+             "batch 1 and 64); fp32 is batch-invariant, so online rollout features match.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
-def build_visual(checkpoint: str, attn_implementation: str, device: torch.device):
-    config = SimpleMemVLAConfig.from_pretrained(checkpoint)
-    backbone_config = AutoConfig.for_model(**dict(config.backbone_config))
+def _safetensors_files(checkpoint: str) -> list[str]:
+    index_path = os.path.join(checkpoint, "model.safetensors.index.json")
+    if os.path.isfile(index_path):
+        with open(index_path) as f:
+            shards = sorted(set(json.load(f)["weight_map"].values()))
+        return [os.path.join(checkpoint, shard) for shard in shards]
+    return [os.path.join(checkpoint, "model.safetensors")]
+
+
+def build_visual(
+    checkpoint: str,
+    attn_implementation: str,
+    device: torch.device,
+    dtype: torch.dtype = torch.bfloat16,
+):
+    """Vision tower of either a SimpleMemVLA checkpoint or a plain HF backbone (e.g. Qwen3.5-4B)."""
+    with open(os.path.join(checkpoint, "config.json")) as f:
+        is_simplememvla = json.load(f).get("model_type") == SimpleMemVLAConfig.model_type
+    if is_simplememvla:
+        config = SimpleMemVLAConfig.from_pretrained(checkpoint)
+        backbone_config = AutoConfig.for_model(**dict(config.backbone_config))
+        prefix = VISUAL_PREFIX
+    else:
+        backbone_config = AutoConfig.from_pretrained(checkpoint)
+        prefix = VISUAL_PREFIX[len("backbone.") :]
     with torch.device("meta"):
         meta_backbone = AutoModelForImageTextToText.from_config(backbone_config)
     visual_cls = type(meta_backbone.model.visual)
@@ -71,14 +103,17 @@ def build_visual(checkpoint: str, attn_implementation: str, device: torch.device
         backbone_config.vision_config, attn_implementation=attn_implementation
     )
     state_dict = {}
-    with safe_open(os.path.join(checkpoint, "model.safetensors"), framework="pt") as f:
-        for key in f.keys():
-            if key.startswith(VISUAL_PREFIX):
-                state_dict[key[len(VISUAL_PREFIX) :]] = f.get_tensor(key)
+    for path in _safetensors_files(checkpoint):
+        with safe_open(path, framework="pt") as f:
+            for key in f.keys():
+                if key.startswith(prefix):
+                    state_dict[key[len(prefix) :]] = f.get_tensor(key)
+    if not state_dict:
+        raise RuntimeError(f"no '{prefix}*' weights found in {checkpoint}")
     visual.load_state_dict(state_dict, strict=True)
     # Cast parameters only: rotary inv_freq buffers stay fp32, as in training.
     for param in visual.parameters():
-        param.data = param.data.to(torch.bfloat16)
+        param.data = param.data.to(dtype)
     return visual.eval().to(device), backbone_config
 
 
@@ -139,7 +174,9 @@ def main() -> None:
         return
 
     device = torch.device("cuda")
-    visual, backbone_config = build_visual(args.checkpoint, args.attn_implementation, device)
+    vit_dtype = getattr(torch, args.vit_dtype)
+    attn = args.attn_implementation if vit_dtype == torch.bfloat16 else "sdpa"
+    visual, backbone_config = build_visual(args.checkpoint, attn, device, dtype=vit_dtype)
     processor = AutoProcessor.from_pretrained(args.checkpoint)
     merge = backbone_config.vision_config.spatial_merge_size
 
@@ -157,7 +194,7 @@ def main() -> None:
         thw = encoded["image_grid_thw"]
         with torch.no_grad():
             feats = visual(
-                encoded["pixel_values"].to(device, dtype=torch.bfloat16),
+                encoded["pixel_values"].to(device, dtype=vit_dtype),
                 grid_thw=thw.to(device),
                 return_dict=True,
             ).pooler_output
@@ -195,6 +232,7 @@ def main() -> None:
         "tokens_per_frame": grid[0] * grid[1],
         "feature_dim": feature_dim,
         "dtype": "float16",
+        "vit_dtype": args.vit_dtype,
         "checkpoint": os.path.abspath(args.checkpoint),
         "root": os.path.abspath(root),
     }

@@ -224,3 +224,75 @@ class VisionTokenMemory(nn.Module):
         if self.fusion == "adaln_add":
             return self.out_proj(z.flatten(1))
         return self.out_proj(z) + self.token_type
+
+
+class NaiveVisionTokenCache(nn.Module):
+    """Project each cached vision token directly into the DiT token sequence.
+
+    No temporal encoder, attention or learned resampler is used. Inputs are
+    ``feats (B,K,N,feature_dim)``, frame ages in seconds ``(B,K)`` and a
+    ``True == valid`` frame mask. Output is ``tokens (B,K*N,cond_dim)`` and
+    its corresponding ``True == valid`` token mask. Spatial pooling is performed
+    by the dataset before this module, using the same rule at deployment.
+    """
+
+    def __init__(
+        self,
+        feature_dim: int,
+        cond_dim: int,
+        tokens_per_frame: int,
+        age_frequency_dim: int = 64,
+    ):
+        super().__init__()
+        if feature_dim <= 0 or cond_dim <= 0 or tokens_per_frame <= 0:
+            raise ValueError("feature_dim, cond_dim and tokens_per_frame must be positive")
+        if age_frequency_dim < 2:
+            raise ValueError("age_frequency_dim must be at least 2")
+        self.feature_dim = int(feature_dim)
+        self.cond_dim = int(cond_dim)
+        self.tokens_per_frame = int(tokens_per_frame)
+        self.age_frequency_dim = int(age_frequency_dim)
+        self.in_norm = nn.LayerNorm(self.feature_dim, eps=1e-6)
+        self.in_proj = nn.Linear(self.feature_dim, self.cond_dim)
+        self.age_proj = nn.Linear(self.age_frequency_dim, self.cond_dim)
+        self.spatial_pos = nn.Parameter(torch.empty(1, 1, self.tokens_per_frame, self.cond_dim))
+        self.token_type = nn.Parameter(torch.empty(1, 1, self.cond_dim))
+        nn.init.normal_(self.spatial_pos, std=0.02)
+        nn.init.normal_(self.token_type, std=0.02)
+
+    def forward(
+        self,
+        feats: torch.Tensor,
+        age: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if feats.ndim != 4:
+            raise ValueError("memory feats must have shape (B,K,N,feature_dim)")
+        batch_size, num_frames, num_tokens, feature_dim = feats.shape
+        if num_tokens != self.tokens_per_frame or feature_dim != self.feature_dim:
+            raise ValueError(
+                f"memory feats expected N={self.tokens_per_frame}, D={self.feature_dim}; "
+                f"got N={num_tokens}, D={feature_dim}"
+            )
+        if tuple(age.shape) != (batch_size, num_frames) or tuple(mask.shape) != (batch_size, num_frames):
+            raise ValueError("memory age and mask must match feats' (B,K) frame dimensions")
+        valid_frames = mask.to(device=feats.device, dtype=torch.bool)
+        frame_age = age.to(device=feats.device)
+        if bool(((frame_age < 0) & valid_frames).any()):
+            raise ValueError("valid memory frames must not have negative age (future observations)")
+        if bool((~torch.isfinite(frame_age) & valid_frames).any()):
+            raise ValueError("valid memory frame ages must be finite")
+        # Padded features and ages are irrelevant even if their storage contains NaN.
+        safe_feats = feats.to(dtype=self.in_proj.weight.dtype).masked_fill(
+            ~valid_frames[:, :, None, None], 0
+        )
+        safe_age = frame_age.masked_fill(~valid_frames, 0)
+        projected = self.in_proj(self.in_norm(safe_feats))
+        age_embedding = self.age_proj(
+            sinusoidal_embedding(safe_age, self.age_frequency_dim).to(projected.dtype)
+        )
+        tokens = projected + self.spatial_pos + age_embedding[:, :, None, :]
+        tokens = tokens.reshape(batch_size, num_frames * num_tokens, self.cond_dim)
+        tokens = tokens + self.token_type
+        valid_tokens = valid_frames[:, :, None].expand(-1, -1, num_tokens).reshape(batch_size, -1)
+        return tokens.masked_fill(~valid_tokens[:, :, None], 0), valid_tokens

@@ -13,9 +13,11 @@ from transformers.utils import ModelOutput
 
 from simplememvla.model.configuration_simplememvla import SimpleMemVLAConfig
 from simplememvla.model.dit_action_head import DiTActionHead
-from simplememvla.model.memory import VisionTokenMemory
+from simplememvla.model.memory import NaiveVisionTokenCache, VisionTokenMemory
+from simplememvla.model.lora import inject_lm_lora, is_lora_parameter
 
 MEMORY_MODES = ("normal", "zero", "shuffle")
+CHECKPOINT_INIT_MODULES = ("backbone", "action_head")
 
 
 @dataclass
@@ -83,6 +85,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         self,
         config: SimpleMemVLAConfig,
         backbone: nn.Module | None = None,
+        defer_lora_init: bool = False,
     ):
         super().__init__(config)
         self.backbone = backbone
@@ -134,23 +137,42 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         if config.use_memory:
             if config.mem_feature_dim is None:
                 config.mem_feature_dim = self.backbone.config.vision_config.out_hidden_size
-            self.memory = VisionTokenMemory(
-                feature_dim=config.mem_feature_dim,
-                cond_dim=config.dit_hidden_size,
-                tokens_per_frame=config.mem_frame_pool**2,
-                hidden_size=config.mem_hidden_size,
-                depth=config.mem_depth,
-                num_heads=config.mem_num_heads,
-                mlp_ratio=config.mem_mlp_ratio,
-                num_queries=config.mem_num_queries,
-                compressor_depth=config.mem_compressor_depth,
-                fusion=config.mem_fusion,
-                dropout=config.mem_dropout,
-            )
+            if config.mem_arch == "naive_tokens":
+                self.memory = NaiveVisionTokenCache(
+                    feature_dim=config.mem_feature_dim,
+                    cond_dim=config.dit_hidden_size,
+                    tokens_per_frame=config.mem_frame_pool**2,
+                )
+            else:
+                self.memory = VisionTokenMemory(
+                    feature_dim=config.mem_feature_dim,
+                    cond_dim=config.dit_hidden_size,
+                    tokens_per_frame=config.mem_frame_pool**2,
+                    hidden_size=config.mem_hidden_size,
+                    depth=config.mem_depth,
+                    num_heads=config.mem_num_heads,
+                    mlp_ratio=config.mem_mlp_ratio,
+                    num_queries=config.mem_num_queries,
+                    compressor_depth=config.mem_compressor_depth,
+                    fusion=config.mem_fusion,
+                    dropout=config.mem_dropout,
+                )
+        self._lm_lora_initialized = False
+        if not defer_lora_init:
+            self._init_lm_lora()
         self._apply_backbone_freeze(config.freeze_backbone)
         for module in self.modules():
             module._is_hf_initialized = True
         self.post_init()
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        result = super().from_pretrained(*args, **kwargs)
+        model = result[0] if isinstance(result, tuple) else result
+        # HF restores trainability after construction. Reapply the configured
+        # freeze/LoRA policy after weights have actually been loaded.
+        model._apply_backbone_freeze(model.config.freeze_backbone)
+        return result
 
     @classmethod
     def from_backbone(
@@ -191,29 +213,43 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         config: SimpleMemVLAConfig,
         dtype: torch.dtype = torch.bfloat16,
         attn_implementation: str | None = None,
+        init_modules: tuple[str, ...] = ("backbone", "action_head"),
     ) -> "SimpleMemVLAForActionPrediction":
-        """Warm start from a released SimpleMemVLA checkpoint (backbone + DiT).
+        """Warm start from a released SimpleMemVLA checkpoint.
 
-        ``config`` describes the new model; only modules absent from the
-        checkpoint (``memory.*``) may be left at their fresh initialisation.
+        Only the top-level modules in ``init_modules`` are loaded: ``backbone``
+        (required) and optionally ``action_head``. Everything else -- the DiT
+        when it is left out, and ``memory.*`` -- keeps its fresh initialisation,
+        with the DiT shape taken from ``config``.
         """
+        init_modules = tuple(dict.fromkeys(init_modules))
+        unknown = set(init_modules) - set(CHECKPOINT_INIT_MODULES)
+        if unknown or "backbone" not in init_modules:
+            raise ValueError(
+                f"init_modules must include 'backbone' and only use "
+                f"{CHECKPOINT_INIT_MODULES}; got {list(init_modules)}"
+            )
+        load_head = "action_head" in init_modules
         ckpt_config = SimpleMemVLAConfig.from_pretrained(checkpoint)
-        for key in ("action_dim", "action_horizon", "state_dim", "use_proprio"):
-            if getattr(ckpt_config, key) != getattr(config, key):
-                raise ValueError(
-                    f"{key}={getattr(config, key)!r} does not match checkpoint "
-                    f"{checkpoint} ({getattr(ckpt_config, key)!r})"
-                )
-        for key in (
-            "dit_hidden_size",
-            "dit_depth",
-            "dit_num_heads",
-            "dit_mlp_ratio",
-            "dit_rope_theta",
-            "dit_mrope_section",
-            "dit_partial_rotary_factor",
-        ):
-            setattr(config, key, getattr(ckpt_config, key))
+        if load_head:
+            for key in ("action_dim", "action_horizon", "state_dim", "use_proprio"):
+                if getattr(ckpt_config, key) != getattr(config, key):
+                    raise ValueError(
+                        f"{key}={getattr(config, key)!r} does not match checkpoint "
+                        f"{checkpoint} ({getattr(ckpt_config, key)!r})"
+                    )
+            for key in (
+                "dit_hidden_size",
+                "dit_depth",
+                "dit_num_heads",
+                "dit_mlp_ratio",
+                "dit_rope_theta",
+                "dit_mrope_section",
+                "dit_partial_rotary_factor",
+            ):
+                setattr(config, key, getattr(ckpt_config, key))
+        config.init_from_checkpoint = checkpoint
+        config.init_modules = list(init_modules)
         config.backbone_config = dict(ckpt_config.backbone_config)
         backbone_config = AutoConfig.for_model(**config.backbone_config)
         from_config_kwargs = {}
@@ -224,14 +260,24 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         )
         for param in backbone.parameters():
             param.data = param.data.to(dtype)
-        model = cls(config=config, backbone=backbone)
-        state_dict = load_checkpoint_state_dict(checkpoint)
+        # Load the unmodified released backbone first. LoRA changes state_dict keys.
+        model = cls(config=config, backbone=backbone, defer_lora_init=True)
+        state_dict = {
+            key: value
+            for key, value in load_checkpoint_state_dict(checkpoint).items()
+            if key.split(".", 1)[0] in init_modules
+        }
+        loaded = {key.split(".", 1)[0] for key in state_dict}
+        if loaded != set(init_modules):
+            raise RuntimeError(
+                f"{checkpoint} has no weights for {sorted(set(init_modules) - loaded)}"
+            )
         missing, unexpected = model.load_state_dict(state_dict, strict=False)
         del state_dict
         if any(key.endswith("lm_head.weight") for key in missing):
             model.backbone.tie_weights()
             missing = [key for key in missing if not key.endswith("lm_head.weight")]
-        bad_missing = [key for key in missing if not key.startswith("memory.")]
+        bad_missing = [key for key in missing if key.split(".", 1)[0] in init_modules]
         if bad_missing or unexpected:
             raise RuntimeError(
                 f"Checkpoint weight mismatch loading {checkpoint}: "
@@ -241,6 +287,8 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             fresh = {f"memory.{name}" for name, _ in model.memory.named_parameters()}
             if not fresh.issubset(set(missing)):
                 raise RuntimeError("checkpoint unexpectedly carries memory.* weights")
+        model._init_lm_lora()
+        model._apply_backbone_freeze(config.freeze_backbone)
         model.action_head.to(dtype=dtype)
         if model.memory is not None:
             model.memory.to(dtype=dtype)
@@ -256,9 +304,27 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             )
         return model
 
+    def _init_lm_lora(self) -> None:
+        if self.config.lm_lora_rank <= 0 or self._lm_lora_initialized:
+            return
+        self.lm_lora_targets = inject_lm_lora(
+            self.backbone,
+            rank=self.config.lm_lora_rank,
+            alpha=self.config.lm_lora_alpha,
+            dropout=self.config.lm_lora_dropout,
+            target_modules=self.config.lm_lora_target_modules,
+        )
+        self._lm_lora_initialized = True
+
     def _apply_backbone_freeze(self, freeze: bool) -> None:
-        for param in self.backbone.parameters():
-            param.requires_grad = not freeze
+        for name, param in self.backbone.named_parameters():
+            # Reapplying partial freeze must never reopen the base LM under LoRA.
+            param.requires_grad = not freeze and (
+                self.config.lm_lora_rank <= 0 or is_lora_parameter(name)
+            )
+        if self.config.freeze_vision_tower:
+            for param in self.backbone.model.visual.parameters():
+                param.requires_grad = False
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         self.backbone.gradient_checkpointing_enable(
@@ -362,19 +428,19 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             cond_pos[:, b, :n] = position_ids[:, b, idx]
         return cond_hidden, cond_token, cond_mask, cond_pos
 
-    def _memory_condition(
+    def _memory_inputs(
         self,
         mem_feats: torch.Tensor | None,
         mem_age: torch.Tensor | None,
         mem_mask: torch.Tensor | None,
         device: torch.device,
         mem_mode: str = "normal",
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        """Returns ``(memory_cond, memory_tokens)`` for the action head."""
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+        """Return memory vector, prefix tokens and their valid-key mask."""
         if mem_mode not in MEMORY_MODES:
             raise ValueError(f"mem_mode must be one of {MEMORY_MODES}, got {mem_mode!r}")
         if self.memory is None or mem_mode == "zero":
-            return None, None
+            return None, None, None
         if mem_feats is None or mem_age is None or mem_mask is None:
             raise ValueError("use_memory=True requires mem_feats, mem_age and mem_mask")
         mem_feats = mem_feats.to(device=device)
@@ -385,12 +451,24 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                 t.roll(1, dims=0) for t in (mem_feats, mem_age, mem_mask)
             )
         out = self.memory(mem_feats, mem_age, mem_mask)
+        if self.config.mem_arch == "naive_tokens":
+            tokens, token_mask = out
+            if self.training and self.config.mem_dropout_prob > 0.0:
+                keep = torch.rand(tokens.shape[0], device=device) >= self.config.mem_dropout_prob
+                token_mask = token_mask & keep[:, None]
+                tokens = tokens.masked_fill(~token_mask[..., None], 0)
+            return None, tokens, token_mask
         if self.training and self.config.mem_dropout_prob > 0.0:
             keep = torch.rand(out.shape[0], device=device) >= self.config.mem_dropout_prob
             out = out * keep.to(dtype=out.dtype).view(-1, *([1] * (out.ndim - 1)))
         if self.config.mem_fusion == "adaln_add":
-            return out, None
-        return None, out
+            return out, None, None
+        return None, out, None
+
+    def _memory_condition(self, *args, **kwargs):
+        # Compatibility for existing diagnostics of the original memory branch.
+        memory_cond, memory_tokens, _ = self._memory_inputs(*args, **kwargs)
+        return memory_cond, memory_tokens
 
     def _condition_span(
         self,
@@ -462,7 +540,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                 raise ValueError("action_mask is required when training on actions")
             action_mask = action_mask.to(device=actions.device)
             span = self._condition_span(labels, condition_span)
-            memory_cond, memory_tokens = self._memory_condition(
+            memory_cond, memory_tokens, memory_attention_mask = self._memory_inputs(
                 mem_feats, mem_age, mem_mask, hidden_states.device, mem_mode
             )
             mem_out = memory_cond if memory_cond is not None else memory_tokens
@@ -485,6 +563,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                 state=state,
                 memory_cond=memory_cond,
                 memory_tokens=memory_tokens,
+                memory_attention_mask=memory_attention_mask,
             )
             action_loss = masked_flow_matching_loss(
                 pred_velocity=pred_velocity,
@@ -536,7 +615,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             position_ids=position_ids,
             attention_mask=attention_mask,
         )
-        memory_cond, memory_tokens = self._memory_condition(
+        memory_cond, memory_tokens, memory_attention_mask = self._memory_inputs(
             mem_feats, mem_age, mem_mask, hidden_states.device, mem_mode
         )
         return self.action_head.sample(
@@ -549,6 +628,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             state=state,
             memory_cond=memory_cond,
             memory_tokens=memory_tokens,
+            memory_attention_mask=memory_attention_mask,
         )
 
     @torch.no_grad()

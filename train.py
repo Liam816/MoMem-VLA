@@ -9,7 +9,7 @@ from simplememvla.compat import apply_fla_torch_compat
 
 apply_fla_torch_compat()
 
-from transformers import AutoProcessor, HfArgumentParser, set_seed
+from transformers import AutoProcessor, HfArgumentParser, TrainerCallback, set_seed
 
 from configs.sft_params import (
     DataArguments,
@@ -83,7 +83,7 @@ def resolve_memcache_defaults(model_args: ModelArguments, data_args: DataArgumen
     if data_args.episodes_file:
         data_args.episodes = read_episodes_file(data_args.episodes_file)
     ckpt = model_args.init_from_checkpoint
-    if ckpt and data_args.stats_path is None:
+    if ckpt and "action_head" in model_args.init_modules and data_args.stats_path is None:
         # A warm-started DiT must keep the normalisation it was trained with.
         data_args.stats_path = os.path.join(ckpt, "stats.json")
     if model_args.condition_source == "prompt" and model_args.vl_loss_weight:
@@ -94,6 +94,15 @@ def resolve_memcache_defaults(model_args: ModelArguments, data_args: DataArgumen
             raise ValueError("use_memory=True requires --mem_feature_dir")
         with open(os.path.join(data_args.mem_feature_dir, MEM_META_FILE)) as f:
             mem_meta = json.load(f)
+        # The cache must hold tokens from the same frozen ViT that encodes the current frame.
+        vlm_source = model_args.init_from_checkpoint or model_args.backbone_model_name_or_path
+        feat_source = mem_meta.get("checkpoint")
+        if feat_source is None or os.path.realpath(feat_source) != os.path.realpath(vlm_source):
+            raise ValueError(
+                f"{data_args.mem_feature_dir} was extracted with the vision tower of "
+                f"{feat_source}, but the VLM is loaded from {vlm_source}; re-run "
+                "scripts/extract_mem_features.py --checkpoint <that VLM>."
+            )
     elif data_args.mem_feature_dir:
         raise ValueError("--mem_feature_dir is set but --use_memory is false")
     return mem_meta
@@ -154,6 +163,11 @@ def train(
         action_loss_weight=model_args.action_loss_weight,
         vl_loss_weight=model_args.vl_loss_weight,
         freeze_backbone=model_args.freeze_backbone,
+        freeze_vision_tower=model_args.freeze_vision_tower,
+        lm_lora_rank=model_args.lm_lora_rank,
+        lm_lora_alpha=model_args.lm_lora_alpha,
+        lm_lora_dropout=model_args.lm_lora_dropout,
+        lm_lora_target_modules=model_args.lm_lora_target_modules,
         use_proprio=model_args.use_proprio,
         state_dropout_prob=model_args.state_dropout_prob,
         robot_tag=data_args.robot_tag,
@@ -168,6 +182,7 @@ def train(
         subtask_index_key=train_dataset.subtask_index_key,
         condition_source=model_args.condition_source,
         single_frame=data_args.single_frame,
+        current_frame_only=data_args.current_frame_only,
         use_memory=model_args.use_memory,
         mem_feature_dim=mem_meta.get("feature_dim"),
         mem_feature_type=mem_meta.get("feature_type", "vit_merger"),
@@ -175,6 +190,7 @@ def train(
         mem_window_sec=data_args.mem_window_sec,
         mem_fps=data_args.mem_fps,
         mem_frame_pool=model_args.mem_frame_pool,
+        mem_arch=model_args.mem_arch,
         mem_hidden_size=model_args.mem_hidden_size,
         mem_depth=model_args.mem_depth,
         mem_num_heads=model_args.mem_num_heads,
@@ -195,6 +211,7 @@ def train(
             config=config,
             dtype=dtype,
             attn_implementation=model_args.attn_implementation,
+            init_modules=tuple(model_args.init_modules),
         )
     else:
         model = SimpleMemVLAForActionPrediction.from_backbone(
@@ -204,7 +221,19 @@ def train(
             attn_implementation=model_args.attn_implementation,
             trust_remote_code=model_args.trust_remote_code,
         )
+    model._apply_backbone_freeze(model_args.freeze_backbone)
+    if model_args.use_memory and not (model_args.freeze_backbone or model_args.freeze_vision_tower):
+        raise ValueError("A precomputed vision cache requires a frozen visual encoder")
+    if model_args.lm_lora_rank > 0:
+        from simplememvla.model.lora import is_lora_parameter
+        trainable = [n for n, p in model.backbone.named_parameters() if p.requires_grad]
+        if not trainable or any(not is_lora_parameter(n) for n in trainable):
+            raise RuntimeError("LM LoRA training must update only adapter A/B parameters in backbone")
     if training_args.process_index == 0:
+        if model_args.lm_lora_rank > 0:
+            print(f"[lora] rank={model_args.lm_lora_rank}; alpha={model_args.lm_lora_alpha}; dropout={model_args.lm_lora_dropout}; targeted_modules={len(model.lm_lora_targets)}; base LM frozen")
+        print(f"[input] current_frame_only={data_args.current_frame_only}; condition_source={model_args.condition_source}; single_frame={data_args.single_frame}")
+        print(f"[visual] frozen={model_args.freeze_vision_tower or model_args.freeze_backbone}; dtype={model.backbone.model.visual.dtype}; attn={model.backbone.model.visual.config._attn_implementation}")
         counts: dict[str, list[int]] = {}
         for name, param in model.named_parameters():
             key = name.split(".")[0]
@@ -213,6 +242,12 @@ def train(
         for key, (total, trainable) in counts.items():
             print(f"[params] {key}: total={total / 1e6:.1f}M trainable={trainable / 1e6:.1f}M")
         print(f"[norm] stats_path={data_args.stats_path or os.path.join(data_args.root, 'meta/stats.json')}")
+        if model_args.init_from_checkpoint:
+            fresh = sorted(set(counts) - set(model_args.init_modules))
+            print(
+                f"[init] loaded {list(model_args.init_modules)} from "
+                f"{model_args.init_from_checkpoint}; fresh init: {fresh}"
+            )
 
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -237,7 +272,18 @@ def train(
         eval_dataset=eval_dataset,
         stats_path=data_args.stats_path,
     )
+    runner.trainer.add_callback(JsonlMetricsCallback())
     runner.train()
+
+
+class JsonlMetricsCallback(TrainerCallback):
+    """Persist each rank-zero log immediately, including before the first save."""
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if state.is_world_process_zero and logs is not None:
+            import time
+            record = {"step": state.global_step, "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **logs}
+            with open(Path(args.output_dir) / "metrics.jsonl", "a") as f:
+                f.write(json.dumps(record, default=float) + "\n")
 
 
 CONFIG_SECTIONS = {

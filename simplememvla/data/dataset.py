@@ -126,7 +126,13 @@ class SimpleMemVLADataset(Dataset):
         self.data_args = data_args
         self.spec = spec
         self.single_frame = bool(getattr(data_args, "single_frame", False))
+        self.current_frame_only = bool(getattr(data_args, "current_frame_only", False))
         self.condition_source = condition_source
+        if self.current_frame_only and (self.single_frame or condition_source != "subtask"):
+            raise ValueError(
+                "current_frame_only=True retains the released video/sub-task interface; "
+                "use single_frame=False and condition_source='subtask'"
+            )
         if self.single_frame != (condition_source == "prompt"):
             raise NotImplementedError(
                 "single_frame=True is implemented together with condition_source="
@@ -150,6 +156,11 @@ class SimpleMemVLADataset(Dataset):
             self.native_fps,
         )
         self.variable_history = bool(data_args.variable_history)
+        if self.current_frame_only:
+            # The original video channel expects a two-frame temporal patch. Both
+            # entries refer to the current observation; no past frame is decoded.
+            self.n_frames = 2
+            self.variable_history = False
         requested_history = data_args.history_image_keys
         if self.single_frame:
             self.history_image_keys = []
@@ -167,7 +178,10 @@ class SimpleMemVLADataset(Dataset):
                 f"history_image_keys {unknown} not among image_keys "
                 f"{data_args.image_keys}"
             )
-        offsets = [0] if self.single_frame else _history_offsets(self.n_frames, self.stride)
+        offsets = (
+            [0, 0] if self.current_frame_only else
+            [0] if self.single_frame else _history_offsets(self.n_frames, self.stride)
+        )
         delta_timestamps = _resolve_delta_timestamps(
             data_args, self.ds_meta, offsets, self.history_image_keys
         )
@@ -370,6 +384,11 @@ class SimpleMemVLADataset(Dataset):
                     raise ValueError(
                         f"History camera {key!r} returned {clip.shape[0]} frame(s); "
                         f"expected {self.n_frames}."
+                    )
+                if self.current_frame_only and not np.array_equal(clip[0], clip[1]):
+                    raise ValueError(
+                        f"Current-only camera {key!r} must duplicate the same current "
+                        "observation; the dataset returned two different frames"
                     )
                 if self.variable_history:
                     pad_key = f"{key}_is_pad"

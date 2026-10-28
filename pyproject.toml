@@ -13,6 +13,7 @@ dependencies = [
   "torchvision==0.19.1",
   "numpy>=1.26,<2",
   "transformers>=5.11",
+  "peft>=0.21.2",
   "accelerate>=1.7.0",
   "deepspeed>=0.15.0",
   "Pillow>=10.0",

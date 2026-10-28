@@ -338,6 +338,7 @@ class DiTActionHead(nn.Module):
         condition_attention_mask: torch.Tensor,
         has_state: bool = False,
         num_memory_tokens: int = 0,
+        memory_attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch_size = condition_hidden_states.shape[0]
         device = condition_hidden_states.device
@@ -353,14 +354,21 @@ class DiTActionHead(nn.Module):
 
         pieces = [condition_position_ids]
         if num_memory_tokens:
-            memory_offsets = torch.arange(
-                num_memory_tokens, device=device, dtype=condition_position_ids.dtype
-            )
-            memory_position_ids = action_start.view(1, batch_size, 1) + memory_offsets.view(
-                1, 1, num_memory_tokens
-            )
+            if memory_attention_mask is None:
+                valid_memory = torch.ones(
+                    batch_size, num_memory_tokens, device=device, dtype=torch.bool
+                )
+            else:
+                valid_memory = memory_attention_mask.to(device=device, dtype=torch.bool)
+                if tuple(valid_memory.shape) != (batch_size, num_memory_tokens):
+                    raise ValueError("memory_attention_mask must have shape (B,M)")
+            memory_offsets = valid_memory.long().cumsum(dim=1) - 1
+            memory_position_ids = action_start.view(1, batch_size, 1) + memory_offsets.unsqueeze(0)
+            memory_position_ids = memory_position_ids.to(dtype=condition_position_ids.dtype)
+            memory_position_ids = memory_position_ids.masked_fill(~valid_memory.unsqueeze(0), 0)
             pieces.append(memory_position_ids.expand(3, -1, -1))
-            action_start = action_start + num_memory_tokens
+            # Batch padding must not move state/action RoPE positions.
+            action_start = action_start + valid_memory.sum(dim=1).to(dtype=action_start.dtype)
         if has_state:
             state_position_ids = action_start.view(1, batch_size, 1).expand(3, -1, -1)
             pieces.append(state_position_ids)
@@ -391,9 +399,12 @@ class DiTActionHead(nn.Module):
         state: torch.Tensor | None = None,
         memory_cond: torch.Tensor | None = None,
         memory_tokens: torch.Tensor | None = None,
+        memory_attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """``memory_cond (B, hidden)`` is added to the adaLN time condition;
-        ``memory_tokens (B, M, hidden)`` are inserted after the condition tokens."""
+        ``memory_tokens (B, M, hidden)`` are inserted after the condition tokens.
+        ``memory_attention_mask (B,M)`` uses ``True == valid`` and defaults to
+        all-valid for compatibility with the fixed-length Perceiver path."""
         batch_size, horizon, _ = noisy_actions.shape
 
         condition_tokens = F.normalize(
@@ -410,17 +421,27 @@ class DiTActionHead(nn.Module):
         masks = [valid_condition]
 
         num_memory_tokens = 0
+        if memory_tokens is None and memory_attention_mask is not None:
+            raise ValueError("memory_attention_mask requires memory_tokens")
         if memory_tokens is not None:
+            if memory_tokens.ndim != 3 or memory_tokens.shape[0] != batch_size or memory_tokens.shape[2] != condition_tokens.shape[2]:
+                raise ValueError("memory_tokens must have shape (B,M,DiT hidden size)")
             num_memory_tokens = memory_tokens.shape[1]
-            tokens.append(memory_tokens.to(dtype=condition_tokens.dtype))
-            masks.append(
-                torch.ones(
+            if memory_attention_mask is None:
+                valid_memory = torch.ones(
                     batch_size,
                     num_memory_tokens,
                     dtype=torch.bool,
                     device=valid_condition.device,
                 )
-            )
+            else:
+                valid_memory = memory_attention_mask.to(device=valid_condition.device, dtype=torch.bool)
+                if tuple(valid_memory.shape) != (batch_size, num_memory_tokens):
+                    raise ValueError("memory_attention_mask must have shape (B,M)")
+            safe_memory = memory_tokens.to(device=condition_tokens.device, dtype=condition_tokens.dtype)
+            safe_memory = safe_memory.masked_fill(~valid_memory[:, :, None], 0)
+            tokens.append(safe_memory)
+            masks.append(valid_memory)
 
         use_state = self.use_proprio and state is not None
         if use_state:
@@ -455,6 +476,7 @@ class DiTActionHead(nn.Module):
             condition_position_ids=condition_position_ids,
             has_state=use_state,
             num_memory_tokens=num_memory_tokens,
+            memory_attention_mask=memory_attention_mask,
         )
         time_emb = self.time_embed(timesteps)
         if memory_cond is not None:
@@ -481,6 +503,7 @@ class DiTActionHead(nn.Module):
         state: torch.Tensor | None = None,
         memory_cond: torch.Tensor | None = None,
         memory_tokens: torch.Tensor | None = None,
+        memory_attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if num_steps <= 0:
             raise ValueError("num_steps must be positive")
@@ -513,6 +536,7 @@ class DiTActionHead(nn.Module):
                 state=state,
                 memory_cond=memory_cond,
                 memory_tokens=memory_tokens,
+                memory_attention_mask=memory_attention_mask,
             )
             actions = actions - dt * velocity
         return actions

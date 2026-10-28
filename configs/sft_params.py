@@ -26,12 +26,24 @@ class ModelArguments:
     vl_loss_weight: float = field(default=1.0)
 
     freeze_backbone: bool = field(default=False)
+    freeze_vision_tower: bool = field(default=False)
+    lm_lora_rank: int = field(default=0, metadata={"help": "0 disables LoRA; positive rank adapts only LM decoder projections"})
+    lm_lora_alpha: float = field(default=32.0)
+    lm_lora_dropout: float = field(default=0.0)
+    lm_lora_target_modules: list[str] = field(default_factory=lambda: ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'in_proj_qkv', 'in_proj_z', 'in_proj_b', 'in_proj_a', 'out_proj', 'gate_proj', 'up_proj', 'down_proj'])
     use_proprio: bool = field(default=True)
     state_dropout_prob: float = field(default=0.0)
 
     init_from_checkpoint: Optional[str] = field(
         default=None,
-        metadata={"help": "Released SimpleMemVLA checkpoint to warm start backbone + DiT from"},
+        metadata={"help": "Released SimpleMemVLA checkpoint to warm start from (see init_modules)"},
+    )
+    init_modules: list[str] = field(
+        default_factory=lambda: ["backbone", "action_head"],
+        metadata={
+            "help": "Modules loaded from init_from_checkpoint: backbone [action_head]. "
+            "Modules left out (and memory) start from a fresh initialisation."
+        },
     )
     condition_source: str = field(
         default="subtask",
@@ -39,6 +51,7 @@ class ModelArguments:
     )
 
     use_memory: bool = field(default=False)
+    mem_arch: str = field(default="perceiver")
     mem_hidden_size: int = field(default=1024)
     mem_depth: int = field(default=4)
     mem_num_heads: int = field(default=16)
@@ -99,6 +112,9 @@ class DataArguments:
     )
     single_frame: bool = field(
         default=False, metadata={"help": "Feed every camera as a single current image (no history video)"}
+    )
+    current_frame_only: bool = field(
+        default=False, metadata={"help": "Original subtask teacher forcing with only the current front frame (duplicated temporal pair) and wrist image"}
     )
     mem_feature_dir: Optional[str] = field(default=None)
     mem_window_sec: float = field(default=60.0)

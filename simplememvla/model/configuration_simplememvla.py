@@ -27,6 +27,11 @@ class SimpleMemVLAConfig(PretrainedConfig):
         action_loss_weight: float = 1.0,
         vl_loss_weight: float = 1.0,
         freeze_backbone: bool = False,
+        freeze_vision_tower: bool = False,
+        lm_lora_rank: int = 0,
+        lm_lora_alpha: float = 32.0,
+        lm_lora_dropout: float = 0.0,
+        lm_lora_target_modules: list[str] | None = None,
         robot_tag: str | None = None,
         control_frequency_hz: int | None = None,
         history_video_sec: float = 60.0,
@@ -37,8 +42,11 @@ class SimpleMemVLAConfig(PretrainedConfig):
         history_image_keys: list[str] | None = None,
         subtask_key: str = "subtask",
         subtask_index_key: str = "subtask_index",
+        init_from_checkpoint: str | None = None,
+        init_modules: list[str] | None = None,
         condition_source: str = "subtask",
         single_frame: bool = False,
+        current_frame_only: bool = False,
         use_memory: bool = False,
         mem_feature_dim: int | None = None,
         mem_feature_type: str = "vit_merger",
@@ -46,6 +54,7 @@ class SimpleMemVLAConfig(PretrainedConfig):
         mem_window_sec: float = 60.0,
         mem_fps: float = 2.0,
         mem_frame_pool: int = 4,
+        mem_arch: str = "perceiver",
         mem_hidden_size: int = 1024,
         mem_depth: int = 4,
         mem_num_heads: int = 16,
@@ -81,6 +90,18 @@ class SimpleMemVLAConfig(PretrainedConfig):
         self.action_loss_weight = action_loss_weight
         self.vl_loss_weight = vl_loss_weight
         self.freeze_backbone = freeze_backbone
+        self.freeze_vision_tower = freeze_vision_tower
+        if lm_lora_rank < 0 or lm_lora_alpha <= 0 or not 0 <= lm_lora_dropout < 1:
+            raise ValueError("Invalid LM LoRA rank/alpha/dropout")
+        self.lm_lora_rank = lm_lora_rank
+        self.lm_lora_alpha = lm_lora_alpha
+        self.lm_lora_dropout = lm_lora_dropout
+        from simplememvla.model.lora import DEFAULT_LM_LORA_TARGET_MODULES
+        self.lm_lora_target_modules = list(
+            DEFAULT_LM_LORA_TARGET_MODULES if lm_lora_target_modules is None else lm_lora_target_modules
+        )
+        if self.lm_lora_rank and not self.lm_lora_target_modules:
+            raise ValueError("LM LoRA target_modules cannot be empty")
         self.robot_tag = robot_tag
         self.control_frequency_hz = control_frequency_hz
         self.history_video_sec = history_video_sec
@@ -98,7 +119,13 @@ class SimpleMemVLAConfig(PretrainedConfig):
                 f"condition_source must be 'subtask' or 'prompt', got {condition_source!r}"
             )
         self.condition_source = condition_source
+        # Provenance only: which released checkpoint / modules the weights started from.
+        self.init_from_checkpoint = init_from_checkpoint
+        self.init_modules = list(init_modules) if init_modules is not None else None
+        if current_frame_only and (single_frame or condition_source != "subtask"):
+            raise ValueError("current_frame_only requires the original subtask interface and single_frame=False")
         self.single_frame = single_frame
+        self.current_frame_only = current_frame_only
         self.use_memory = use_memory
         self.mem_feature_dim = mem_feature_dim
         self.mem_feature_type = mem_feature_type
@@ -106,6 +133,11 @@ class SimpleMemVLAConfig(PretrainedConfig):
         self.mem_window_sec = mem_window_sec
         self.mem_fps = mem_fps
         self.mem_frame_pool = mem_frame_pool
+        if mem_arch not in ("perceiver", "naive_tokens"):
+            raise ValueError(f"Unsupported mem_arch: {mem_arch}")
+        if use_memory and mem_arch == "naive_tokens" and mem_fusion != "prefix_tokens":
+            raise ValueError("naive_tokens requires mem_fusion=prefix_tokens")
+        self.mem_arch = mem_arch
         self.mem_hidden_size = mem_hidden_size
         self.mem_depth = mem_depth
         self.mem_num_heads = mem_num_heads
