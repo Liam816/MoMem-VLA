@@ -1,0 +1,13 @@
+# E2w (superseded, warm-started DiT): + memory cache, adaLN fusion (main)
+_base_: base_warmdit.yaml
+
+model:
+  use_memory: true
+  mem_fusion: adaln_add
+
+data:
+  mem_feature_dir: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/features/robomme_vit_merger_front
+
+training:
+  run_name: robomme_small_E2_warmdit
+  output_dir: ./checkpoints/mem/robomme_small_E2_warmdit

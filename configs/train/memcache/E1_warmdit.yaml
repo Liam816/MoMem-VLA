@@ -1,0 +1,9 @@
+# E1w (superseded, warm-started DiT): single frame, no memory (lower bound)
+_base_: base_warmdit.yaml
+
+model:
+  use_memory: false
+
+training:
+  run_name: robomme_small_E1_warmdit
+  output_dir: ./checkpoints/mem/robomme_small_E1_warmdit

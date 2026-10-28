@@ -1,4 +1,4 @@
-# E2: + memory cache, adaLN fusion (main)
+# E2: + memory cache, adaLN fusion (main). Frozen original Qwen3.5-4B VLM, DiT from scratch (see base.yaml).
 _base_: base.yaml
 
 model:
@@ -6,7 +6,7 @@ model:
   mem_fusion: adaln_add
 
 data:
-  mem_feature_dir: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/features/robomme_vit_merger_front
+  mem_feature_dir: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/features/robomme_vit_merger_front_qwen35base
 
 training:
   run_name: robomme_small_E2

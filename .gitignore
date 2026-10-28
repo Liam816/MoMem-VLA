@@ -13,7 +13,7 @@ checkpoints/
 checkpoint-*/
 
 # Local data / model weights (see README for download instructions)
-data/datasets/
+data/datasets
 Qwen/
 keithyc/
 *.npy

@@ -1,0 +1,126 @@
+# FINAL user confirmation: load FULL pretrained SimpleMemVLA VLM + DiT.
+# init_modules=[backbone, action_head]; fresh optimizer/LoRA/memory, resume=false.
+# ViT frozen; LM decoder LoRA32; VLM current-frame-only; original subtask teacher forcing.
+# E1: no memory. E2: naive vision token cache -> DiT prefix only.
+# Same pretrained DiT + random LoRA initialization; launcher isolates memory CPU RNG.
+# Batch10 x 3 ranks x accum2 = global60; no GC; GPU ZeRO2 optimizer.
+# 50000 steps, warmup2500; full checkpoints 5000/16250/27500/38750/50000.
+model:
+  backbone_model_name_or_path: /mnt/cpfs/heping/SimpleMemVLA-data/checkpoints/simplememvla_robomme
+  init_from_checkpoint: /mnt/cpfs/heping/SimpleMemVLA-data/checkpoints/simplememvla_robomme
+  init_modules:
+  - backbone
+  - action_head
+  dtype: bfloat16
+  attn_implementation: flash_attention_2
+  model_max_length: 8192
+  freeze_backbone: false
+  freeze_vision_tower: true
+  lm_lora_rank: 32
+  lm_lora_alpha: 32.0
+  lm_lora_dropout: 0.0
+  lm_lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - in_proj_qkv
+  - in_proj_z
+  - in_proj_b
+  - in_proj_a
+  - out_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+  condition_source: subtask
+  action_loss_weight: 1.0
+  vl_loss_weight: 1.0
+  use_proprio: true
+  state_dropout_prob: 0.0
+  timestep_beta_alpha: 1.5
+  timestep_beta_beta: 1.0
+  use_memory: true
+  mem_arch: naive_tokens
+  mem_frame_pool: 2
+  mem_fusion: prefix_tokens
+  mem_dropout_prob: 0.0
+  dit_hidden_size: 2048
+  dit_depth: 16
+  dit_num_heads: 16
+  dit_mlp_ratio: 3.5
+  dit_dropout: 0.0
+  dit_rope_theta: 10000000
+  dit_mrope_section:
+  - 11
+  - 11
+  - 10
+  dit_partial_rotary_factor: 0.25
+data:
+  benchmark: robomme
+  root: /mnt/cpfs/heping/SimpleMemVLA-data/datasets/yinchenghust/robomme_lerobot
+  episodes_file: /mnt/cpfs/heping/SimpleMemVLA-data/splits/robomme_small_train.txt
+  val_episodes_file: /mnt/cpfs/heping/SimpleMemVLA-data/splits/robomme_small_val.txt
+  stats_path: /mnt/cpfs/heping/SimpleMemVLA-data/checkpoints/simplememvla_robomme/stats.json
+  single_frame: false
+  current_frame_only: true
+  image_keys:
+  - observation.images.front
+  - observation.images.wrist
+  history_image_keys:
+  - observation.images.front
+  history_video_sec: 60.0
+  history_video_fps: 2.0
+  native_video_fps: 20.0
+  subtask_index_key: subtask_online_index
+  skip_video_demo_frames: true
+  image_aug: false
+  variable_history: false
+  mem_feature_dir: /mnt/cpfs/heping/SimpleMemVLA-data/features/robomme_released_fp32_sfpost_20261025_v1
+  mem_window_sec: 60.0
+  mem_fps: 2.0
+training:
+  deepspeed: /mnt/cpfs/heping/SimpleMemVLA/configs/train/memcache/zero2_gpu_adamw_50k.json
+  per_device_train_batch_size: 10
+  per_device_eval_batch_size: 5
+  gradient_accumulation_steps: 2
+  max_steps: 50000
+  warmup_steps: 2500
+  backbone_lr: 5.0e-06
+  action_head_lr: 5.0e-05
+  memory_lr: 0.0001
+  weight_decay: 1.0e-08
+  lr_scheduler_type: cosine_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr_rate: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  optim: adamw_torch
+  bf16: true
+  tf32: true
+  gradient_checkpointing: false
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  dataloader_num_workers: 4
+  dataloader_persistent_workers: true
+  dataloader_pin_memory: true
+  remove_unused_columns: false
+  report_to: wandb
+  logging_steps: 10
+  logging_first_step: true
+  disable_tqdm: true
+  eval_strategy: steps
+  eval_steps: 500
+  eval_max_batches: 50
+  save_strategy: steps
+  save_first_fraction: 0.1
+  save_num_checkpoints: 5
+  save_total_limit: 5
+  load_best_model_at_end: false
+  seed: 429
+  data_seed: 429
+  resume: false
+  output_dir: /mnt/cpfs/heping/SimpleMemVLA-data/output/fullpretrain_sf_50k_fast_uniform_20261026_v2/e2_5w_iter
+  run_name: e2_5w_iter
+  ignore_data_skip: false

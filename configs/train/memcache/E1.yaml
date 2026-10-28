@@ -1,4 +1,4 @@
-# E1: single frame, no memory (lower bound)
+# E1: single frame, no memory (lower bound). Frozen original Qwen3.5-4B VLM, DiT from scratch (see base.yaml).
 _base_: base.yaml
 
 model:

@@ -1,0 +1,9 @@
+# E1-ckptvlm: single frame, no memory (lower bound). VLM = released simplememvla_robomme backbone (see base_ckptvlm.yaml).
+_base_: base_ckptvlm.yaml
+
+model:
+  use_memory: false
+
+training:
+  run_name: robomme_small_E1_ckptvlm
+  output_dir: ./checkpoints/mem/robomme_small_E1_ckptvlm

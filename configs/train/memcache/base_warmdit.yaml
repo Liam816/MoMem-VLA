@@ -1,0 +1,53 @@
+# SUPERSEDED (kept to reproduce the 10-24 runs E1w/E2w): frozen VLM *and* DiT
+# warm-started from the released simplememvla_robomme checkpoint. The DiT has
+# pretrained control knowledge, so these are not random-head controls. Its
+# training episode membership remains unverified; global statistics do not prove
+# train/val/test overlap. Use base.yaml for the original random-head comparison.
+# Paths follow DATA_HOME (default /mnt/cpfs/heping/SimpleMemVLA-data).
+_base_: ../base.yaml
+
+model:
+  backbone_model_name_or_path: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/checkpoints/simplememvla_robomme
+  init_from_checkpoint: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/checkpoints/simplememvla_robomme
+  init_modules: [backbone, action_head]
+  freeze_backbone: true
+  condition_source: prompt
+  vl_loss_weight: 0.0
+  use_memory: false
+  mem_frame_pool: 4
+  mem_hidden_size: 1024
+  mem_depth: 4
+  mem_num_heads: 16
+  mem_mlp_ratio: 4.0
+  mem_num_queries: 16
+  mem_compressor_depth: 2
+  mem_fusion: adaln_add
+  mem_dropout_prob: 0.0
+
+data:
+  benchmark: robomme
+  root: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/datasets/yinchenghust/robomme_lerobot
+  episodes_file: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/splits/robomme_small_train.txt
+  val_episodes_file: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/splits/robomme_small_val.txt
+  stats_path: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/checkpoints/simplememvla_robomme/stats.json
+  single_frame: true
+  image_aug: false
+  mem_window_sec: 60.0
+  mem_fps: 2.0
+
+training:
+  per_device_train_batch_size: 16
+  per_device_eval_batch_size: 16
+  gradient_accumulation_steps: 1
+  max_steps: 15000
+  warmup_steps: 500
+  save_steps: 2500
+  save_total_limit: 2
+  eval_strategy: steps
+  eval_steps: 1000
+  eval_max_batches: 50
+  backbone_lr: 0.0
+  action_head_lr: 3.0e-5
+  memory_lr: 1.0e-4
+  gradient_checkpointing: false
+  dataloader_num_workers: 16

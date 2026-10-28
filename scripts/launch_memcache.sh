@@ -3,6 +3,7 @@
 #
 #   bash scripts/launch_memcache.sh E1 4,5            # new run, or resume if checkpoints exist
 #   bash scripts/launch_memcache.sh E2 6,7
+#   bash scripts/launch_memcache.sh E2_warmdit 6,7   # any configs/train/memcache/<EXP>.yaml
 #   bash scripts/launch_memcache.sh E2 6,7 --max_steps 20000 --mem_depth 6
 #   DRY_RUN=1 bash scripts/launch_memcache.sh E1 4,5  # print the full command only
 #
@@ -11,8 +12,8 @@
 # Log:    $DATA_HOME/outputs/memcache/run_<EXP>_<timestamp>.log
 set -euo pipefail
 
-EXP="${1:?usage: launch_memcache.sh <E1|E2|E3> <gpu list, e.g. 4,5>}"
-GPUS="${2:?usage: launch_memcache.sh <E1|E2|E3> <gpu list, e.g. 4,5>}"
+EXP="${1:?usage: launch_memcache.sh <EXP (configs/train/memcache/<EXP>.yaml)> <gpu list, e.g. 4,5>}"
+GPUS="${2:?usage: launch_memcache.sh <EXP (configs/train/memcache/<EXP>.yaml)> <gpu list, e.g. 4,5>}"
 shift 2
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,11 +30,15 @@ CONDA_ENV="${CONDA_ENV:-simplememvla-robomme}"
 OUT_ROOT="${OUT_ROOT:-$DATA_HOME/outputs/memcache}"
 RUN_NAME="${RUN_NAME:-robomme_small_${EXP}}"
 
+if [[ ! -f "$REPO_ROOT/configs/train/memcache/${EXP}.yaml" ]]; then
+  echo "unknown EXP: $EXP (no configs/train/memcache/${EXP}.yaml)" >&2
+  exit 1
+fi
 case "$EXP" in
   E1) DEF_PORT=6031 ;;
   E2) DEF_PORT=6032 ;;
   E3) DEF_PORT=6033 ;;
-  *) echo "unknown EXP: $EXP (E1|E2|E3)" >&2; exit 1 ;;
+  *) DEF_PORT=$(( 6040 + $(printf '%s' "$EXP" | cksum | cut -d' ' -f1) % 50 )) ;;
 esac
 IFS=, read -r -a _gpus <<< "$GPUS"
 # Keep global batch 64 = 16 per GPU x GPUs x accumulation.
@@ -83,6 +88,10 @@ LOG="$OUT_ROOT/run_${EXP}_$(date +%Y%m%d_%H%M%S).log"
 setsid nohup bash -c 'bash scripts/train_mem.sh "$@"; echo "TRAIN_EXIT=$? $(date "+%F %T")"' \
   _ "${OVERRIDES[@]}" >> "$LOG" 2>&1 < /dev/null &
 echo "started $EXP on GPUs $GPUS (session pid $!)"
+_last_ckpt=$(ls -d "$OUTPUT_DIR"/checkpoint-* 2>/dev/null | sort -t- -k2 -n | tail -1 || true)
+if [[ "$RESUME" == auto && -n "$_last_ckpt" ]]; then
+  echo "resume: from $_last_ckpt (RESUME=auto found it; use a new RUN_NAME to start fresh)"
+fi
 echo "log:    $LOG"
 echo "output: $OUTPUT_DIR"
 echo "follow: tail -f $LOG | tr '\\r' '\\n' | grep -a -E 'eval_|loss|Error|TRAIN_EXIT'"

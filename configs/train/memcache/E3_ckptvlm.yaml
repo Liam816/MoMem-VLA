@@ -1,0 +1,13 @@
+# E3-ckptvlm: + memory cache, prefix tokens (fusion control). VLM = released simplememvla_robomme backbone (see base_ckptvlm.yaml).
+_base_: base_ckptvlm.yaml
+
+model:
+  use_memory: true
+  mem_fusion: prefix_tokens
+
+data:
+  mem_feature_dir: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/features/robomme_vit_merger_front
+
+training:
+  run_name: robomme_small_E3_ckptvlm
+  output_dir: ./checkpoints/mem/robomme_small_E3_ckptvlm

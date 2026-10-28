@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Single-frame + history vision-token cache experiments (frozen VLM, warm-started DiT).
+# Single-frame + history vision-token cache experiments (frozen VLM, DiT from scratch).
 # The recipe lives in configs/train/memcache/<EXP>.yaml:
 #   E1: single frame, no memory          (lower bound)
 #   E2: + memory cache, adaLN fusion     (main)
 #   E3: + memory cache, prefix tokens    (fusion control)
+#   (frozen original Qwen3.5-4B VLM; E*_ckptvlm: frozen released simplememvla_robomme VLM)
+#   E*_warmdit: superseded runs that also warm-started the DiT from the checkpoint
 # usage: EXP=E2 bash scripts/train_mem.sh [--flag value ...]
 # DRY_RUN=1 prints the fully expanded command (with the exported env) and exits.
 set -euo pipefail

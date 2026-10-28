@@ -1,17 +1,31 @@
-# Single-frame + history vision-token cache experiments on the RoboMME small split
-# (frozen VLM, DiT warm-started from the released checkpoint).
+# Single-frame + history vision-token cache experiments on the RoboMME small split.
 #   E1: single frame, no memory          (lower bound)
 #   E2: + memory cache, adaLN fusion     (main)
 #   E3: + memory cache, prefix tokens    (fusion control)
-# Paths follow DATA_HOME (default /mnt/cpfs/heping/SimpleMemVLA-data).
+#
+# VLM = the ORIGINAL Qwen3.5-4B (no robot fine-tuning), frozen. Nothing is loaded
+# from the released SimpleMemVLA checkpoints. Their global statistics cover a
+# larger set than the public train dataset, but do not establish which episodes
+# trained the model or prove evaluation overlap. The DiT and memory train from
+# scratch; the memory cache must be extracted with this same Qwen3.5-4B vision tower
+# (train.py checks features/<dir>/meta.json).
+#   *_ckptvlm.yaml: same, but the frozen VLM is the released simplememvla_robomme backbone
+#   *_warmdit.yaml: historical controls that also warm-started the DiT
+# Paths follow DATA_HOME (default /mnt/cpfs/heping/SimpleMemVLA-data) and QWEN35_4B
+# (default /mnt/cpfs/heping/checkpoints/Qwen3.5-4B, rev 851bf6e).
 _base_: ../base.yaml
 
 model:
-  backbone_model_name_or_path: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/checkpoints/simplememvla_robomme
-  init_from_checkpoint: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/checkpoints/simplememvla_robomme
+  backbone_model_name_or_path: ${QWEN35_4B:-/mnt/cpfs/heping/checkpoints/Qwen3.5-4B}
+  init_from_checkpoint: null
   freeze_backbone: true
   condition_source: prompt
   vl_loss_weight: 0.0
+  # DiT shape = the released recipe (fresh weights).
+  dit_hidden_size: 2048
+  dit_depth: 16
+  dit_num_heads: 16
+  dit_mlp_ratio: 3.5
   use_memory: false
   mem_frame_pool: 4
   mem_hidden_size: 1024
@@ -28,7 +42,8 @@ data:
   root: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/datasets/yinchenghust/robomme_lerobot
   episodes_file: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/splits/robomme_small_train.txt
   val_episodes_file: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/splits/robomme_small_val.txt
-  stats_path: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/checkpoints/simplememvla_robomme/stats.json
+  # Fresh DiT: normalise with this dataset's own statistics, not the checkpoint's.
+  stats_path: ${DATA_HOME:-/mnt/cpfs/heping/SimpleMemVLA-data}/datasets/yinchenghust/robomme_lerobot/meta/stats.json
   single_frame: true
   image_aug: false
   mem_window_sec: 60.0
@@ -37,16 +52,17 @@ data:
 training:
   per_device_train_batch_size: 16
   per_device_eval_batch_size: 16
-  gradient_accumulation_steps: 1
-  max_steps: 15000
-  warmup_steps: 500
-  save_steps: 2500
+  gradient_accumulation_steps: 1   # launch_memcache.sh sets it so global batch = 64
+  # From scratch: the released recipe's DiT lr / warmup, and twice the old step budget.
+  max_steps: 30000
+  warmup_steps: 1000
+  backbone_lr: 0.0
+  action_head_lr: 5.0e-5
+  memory_lr: 1.0e-4
+  save_steps: 5000
   save_total_limit: 2
   eval_strategy: steps
   eval_steps: 1000
   eval_max_batches: 50
-  backbone_lr: 0.0
-  action_head_lr: 3.0e-5
-  memory_lr: 1.0e-4
   gradient_checkpointing: false
   dataloader_num_workers: 16
