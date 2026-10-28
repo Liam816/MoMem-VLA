@@ -57,6 +57,11 @@ class BatchedEvalPolicy:
             attention_mask=attention_mask,
         )
 
+    def _action_memory_kwargs(self, processed_list):
+        if getattr(self.model.config, "use_memory", False):
+            raise RuntimeError("A memory checkpoint requires a memory-aware sub-task policy")
+        return {}
+
     @torch.no_grad()
     def generate_batch(
         self,
@@ -281,6 +286,7 @@ class BatchedEvalPolicy:
             state_batch = torch.stack(
                 [s[0] if s.dim() == 2 else s for s in state_norm_list]
             ).to(dev)
+        memory_kwargs = self._action_memory_kwargs(processed_list)
         actions_b = self.model.action_head.sample(
             cond_hidden,
             condition_position_ids=cond_pos,
@@ -289,6 +295,7 @@ class BatchedEvalPolicy:
             num_steps=self.num_denoising_steps,
             temperature=self.eval_temperature,
             state=state_batch,
+            **memory_kwargs,
         )
 
         results = []

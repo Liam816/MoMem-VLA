@@ -46,14 +46,25 @@ DEFAULT_TASKS = [
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pretrained_checkpoint", default="./checkpoints/sft/simplememvla/robomme_baseline")
+    ap.add_argument("--backbone_override", default=None,
+                    help="Evaluation-only: replace the full VLM with this pretrained backbone, "
+                         "keeping the checkpoint's action head, processor, stats and input pipeline.")
+    ap.add_argument("--current_frame_only", action="store_true", default=False,
+                    help="Original sub-task policy with no history: repeat only the current "
+                         "frame as one video patch, retaining all checkpoint weights and prompts.")
     ap.add_argument("--tasks", nargs="*", default=None,
                     help="Subset of tasks to evaluate (default: all 16 RoboMME tasks).")
     ap.add_argument("--dataset_split", default="test", choices=["test", "val", "train"],
                     help="Benchmark episode split (official frozen lists; test=50/task).")
     ap.add_argument("--episodes_per_task", type=int, default=50,
                     help="Episodes per task (capped at the split's episode count; test has 50).")
+    ap.add_argument("--episode_ids_json", default=None,
+                    help="JSON file {task: [episode ids of --dataset_split]}; evaluates exactly "
+                         "those episodes (instead of 0..episodes_per_task-1) for the listed tasks.")
     ap.add_argument("--group_size", type=int, default=2,
                     help="Envs evaluated in parallel per group (= envs batched into one forward).")
+    ap.add_argument("--fail_on_env_error", action="store_true", default=False,
+                    help="Abort a task on simulator step errors instead of counting them as failures.")
     ap.add_argument("--execute_horizon", type=int, default=16,
                     help="Receding horizon: execute the first N of the predicted chunk, then re-decide.")
     ap.add_argument("--max_steps", type=int, default=1300,
@@ -110,15 +121,69 @@ def _check_attn_available(attn_implementation: str) -> None:
         )
 
 
-def build_policy(args):
+def build_memcache_policy(args):
+    """Single-frame + memory-cache checkpoints (configs/train/memcache/*)."""
     from transformers import AutoProcessor
 
-    from robomme_sim.policy import RoboMMEPolicy, get_vla
+    from robomme_sim.memcache_policy import MemCacheBatchedPolicy, MemCacheBuffer
+    from robomme_sim.policy import get_vla
 
-    _check_attn_available(args.attn_implementation)
+    if getattr(args, "pipelined", False):
+        raise ValueError("--pipelined is not supported for memory-cache checkpoints")
     vla, unnormalize_action, normalize_state = get_vla(
         args.pretrained_checkpoint, args.compute_dtype,
         attn_implementation=args.attn_implementation,
+    )
+    if vla.memory is not None:
+        vla.memory.to(dtype=getattr(torch, args.compute_dtype))
+    processor = AutoProcessor.from_pretrained(
+        args.pretrained_checkpoint,
+        trust_remote_code=True,
+        padding_side="right",
+        model_max_length=8192,
+    )
+    cfg = vla.config
+    print(f"[eval] memory-cache checkpoint: single_frame={cfg.single_frame} "
+          f"use_memory={cfg.use_memory} fusion={cfg.mem_fusion if cfg.use_memory else '-'} "
+          f"backbone={cfg.backbone_model_name_or_path}", flush=True)
+    batched = MemCacheBatchedPolicy(
+        model=vla, processor=processor,
+        unnormalize_action=unnormalize_action, normalize_state=normalize_state,
+        num_denoising_steps=args.num_denoising_steps, eval_temperature=args.eval_temperature,
+        device=next(vla.parameters()).device,
+    )
+
+    def buffer_factory():
+        return MemCacheBuffer(vla, processor)
+
+    return batched, buffer_factory, normalize_state
+
+
+def build_policy(args):
+    from transformers import AutoProcessor
+
+    from robomme_sim.memcache_policy import is_memcache_checkpoint
+    from robomme_sim.policy import RoboMMEPolicy, get_vla
+    from simplememvla.model import SimpleMemVLAConfig
+
+    _check_attn_available(args.attn_implementation)
+    checkpoint_config = SimpleMemVLAConfig.from_pretrained(args.pretrained_checkpoint)
+    if getattr(checkpoint_config, "current_frame_only", False):
+        args.current_frame_only = True
+    if is_memcache_checkpoint(checkpoint_config):
+        if getattr(args, "current_frame_only", False):
+            raise ValueError("--current_frame_only requires the original sub-task policy, "
+                             "not a prompt-conditioned memory-cache checkpoint")
+        if getattr(args, "backbone_override", None):
+            raise ValueError("--backbone_override is only supported for the original sub-task policy; "
+                             "memory-cache checkpoints require matching cached features")
+        return build_memcache_policy(args)
+    if getattr(args, "current_frame_only", False) and getattr(args, "pipelined", False):
+        raise ValueError("--current_frame_only is not supported with --pipelined")
+    vla, unnormalize_action, normalize_state = get_vla(
+        args.pretrained_checkpoint, args.compute_dtype,
+        attn_implementation=args.attn_implementation,
+        backbone_override=getattr(args, "backbone_override", None),
     )
     processor = AutoProcessor.from_pretrained(
         args.pretrained_checkpoint,
@@ -127,6 +192,9 @@ def build_policy(args):
         model_max_length=8192,
     )
     device = next(vla.parameters()).device
+    print(f"[eval] current_frame_only={getattr(args, 'current_frame_only', False)}; "
+          f"checkpoint={args.pretrained_checkpoint}; "
+          "conditioning=generated sub-task hidden states + token embeddings", flush=True)
     if getattr(args, "pipelined", False):
         from robomme_sim.pipelined_policy import PipelinedBufferPolicy, PipelinedEvalGroup
 
@@ -157,7 +225,11 @@ def build_policy(args):
         )
         return batched, buffer_factory, normalize_state
 
-    batched = BatchedEvalPolicy(
+    batched_class, buffer_class = BatchedEvalPolicy, RoboMMEPolicy
+    if getattr(vla.config, "use_memory", False):
+        from robomme_sim.subtask_memory_policy import SubtaskMemoryBatchedPolicy, SubtaskMemoryBuffer
+        batched_class, buffer_class = SubtaskMemoryBatchedPolicy, SubtaskMemoryBuffer
+    batched = batched_class(
         model=vla, processor=processor,
         unnormalize_action=unnormalize_action, normalize_state=normalize_state,
         num_denoising_steps=args.num_denoising_steps, eval_temperature=args.eval_temperature,
@@ -165,11 +237,12 @@ def build_policy(args):
     )
 
     def buffer_factory():
-        return RoboMMEPolicy(
+        return buffer_class(
             vla=vla, processor=processor,
             unnormalize_action=unnormalize_action, normalize_state=normalize_state,
             num_denoising_steps=args.num_denoising_steps, temperature=args.eval_temperature,
             max_subtask_tokens=args.max_subtask_tokens,
+            current_frame_only=getattr(args, "current_frame_only", False),
         )
 
     return batched, buffer_factory, normalize_state
@@ -267,6 +340,14 @@ def run_group(args, pool, batched, buffer_factory, normalize_state, task, specs,
         step_results = pool.step(action_chunks, act)
         for g in act:
             res = step_results[g]
+            if getattr(args, "fail_on_env_error", False) and (
+                not isinstance(res, dict) or "error" in res
+                or res.get("status") == "error" or res.get("error_message") is not None
+            ):
+                raise RuntimeError(
+                    f"Simulator step failed: task={task} episode={specs[g].get('episode')} "
+                    f"decision={decisions_taken} result={res!r}"
+                )
             if not isinstance(res, dict) or "error" in res:
                 success[g] = False
                 if g in active:
@@ -300,6 +381,9 @@ def evaluate_tasks(args, tasks) -> dict:
     group_size = int(min(args.group_size, n_req))
 
     batched, buffer_factory, normalize_state = build_policy(args)
+    # A/B weight loading may consume RNG differently; align sampling after loading.
+    torch.manual_seed(0)
+    np.random.seed(0)
     pool = InProcSimPool(
         num_envs=group_size, dataset_split=args.dataset_split, max_steps=args.max_steps,
         step_timeout=args.step_timeout, reset_timeout=args.reset_timeout,
@@ -316,7 +400,15 @@ def evaluate_tasks(args, tasks) -> dict:
                                       action_space="joint_angle", max_steps=args.max_steps)
         return builder.get_episode_num()
 
+    episode_ids = {}
+    if getattr(args, "episode_ids_json", None):
+        with open(args.episode_ids_json) as f:
+            episode_ids = {t: [int(e) for e in eps] for t, eps in json.load(f).items()}
+
     def build_specs(task, done, g):
+        ids = episode_ids.get(task)
+        if ids is not None:
+            return [{"task": task, "episode": ids[done + e]} for e in range(g)]
         return [{"task": task, "episode": done + e} for e in range(g)]
 
     video_root = getattr(args, "video_dir", None)
@@ -356,7 +448,13 @@ def evaluate_tasks(args, tasks) -> dict:
             per_task_oom[task] = False
             continue
         n = min(n_req, n_avail)
-        if n < n_req:
+        if task in episode_ids:
+            bad = [e for e in episode_ids[task] if not 0 <= e < n_avail]
+            if bad:
+                raise ValueError(f"{task}: episode ids {bad} outside the {args.dataset_split} split (0..{n_avail - 1})")
+            n = len(episode_ids[task])
+            print(f"[eval] {task}: explicit episodes {episode_ids[task]}", flush=True)
+        elif n < n_req:
             print(f"[eval] {task}: split has only {n_avail} episodes (requested {n_req}) "
                   f"-> evaluating {n}.", flush=True)
         successes = []
@@ -373,6 +471,8 @@ def evaluate_tasks(args, tasks) -> dict:
             except Exception as e:
                 import traceback
                 print(f"[eval] group {task}:{done} failed: {e}\n{traceback.format_exc()[:1200]}", flush=True)
+                if getattr(args, "fail_on_env_error", False):
+                    raise
             done += g
         torch.cuda.empty_cache()
         gc.collect()
@@ -495,6 +595,12 @@ def main():
     if args.video_dir:
         print(f"[eval] recording up to {args.video_max_per_task} success + {args.video_max_per_task} "
               f"failure video(s)/task under {args.video_dir}/<task>/ ; results JSON -> {out_json}", flush=True)
+
+    if out_json:
+        run_dir = os.path.dirname(os.path.abspath(out_json))
+        os.makedirs(run_dir, exist_ok=True)
+        with open(os.path.join(run_dir, "eval_args.json"), "w") as f:
+            json.dump(vars(args), f, indent=2)
 
     num_gpus = max(1, int(args.num_gpus))
     if num_gpus == 1:

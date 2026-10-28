@@ -72,7 +72,13 @@ def _build_vla(
             f"Checkpoint weight mismatch loading {checkpoint}: "
             f"missing={missing[:8]} unexpected={unexpected[:8]}"
         )
+    # LoRA construction may upcast adapters; keep every inference parameter in
+    # the requested compute dtype without demoting fp32 rotary buffers.
+    for param in vla.backbone.parameters():
+        param.data = param.data.to(dtype)
     vla.action_head.to(dtype=dtype)
+    if vla.memory is not None:
+        vla.memory.to(dtype=dtype)
     bad_params = [n for n, p in vla.backbone.named_parameters() if p.dtype != dtype]
     if bad_params:
         raise RuntimeError(
@@ -95,10 +101,56 @@ def get_vla(
     checkpoint: str,
     compute_dtype: str = "bfloat16",
     attn_implementation: str | None = "flash_attention_2",
+    *,
+    backbone_override: str | None = None,
 ):
+    dtype = getattr(torch, compute_dtype)
     vla = _build_vla(
-        checkpoint, getattr(torch, compute_dtype), attn_implementation=attn_implementation
+        checkpoint, dtype, attn_implementation=attn_implementation
     )
+    if backbone_override:
+        # Keep the released DiT, processor and normalisation; replace VLM weights only.
+        override_kwargs = {"dtype": dtype, "output_loading_info": True}
+        if attn_implementation:
+            override_kwargs["attn_implementation"] = attn_implementation
+        backbone, loading_info = AutoModelForImageTextToText.from_pretrained(
+            backbone_override, **override_kwargs
+        )
+        missing = loading_info.get("missing_keys", [])
+        unexpected = [
+            key for key in loading_info.get("unexpected_keys", [])
+            if not key.startswith("mtp.")
+        ]
+        if missing or unexpected or loading_info.get("mismatched_keys") or loading_info.get("error_msgs"):
+            raise RuntimeError(
+                f"Backbone override weight mismatch: missing={missing[:8]} "
+                f"unexpected={unexpected[:8]} loading_info={loading_info}"
+            )
+        original_shapes = {key: tuple(value.shape) for key, value in vla.backbone.state_dict().items()}
+        override_shapes = {key: tuple(value.shape) for key, value in backbone.state_dict().items()}
+        if original_shapes != override_shapes:
+            raise RuntimeError("Backbone override must have the same parameter keys and shapes")
+        bad_params = [name for name, param in backbone.named_parameters() if param.dtype != dtype]
+        demoted = [
+            name for name, buf in backbone.named_buffers()
+            if "inv_freq" in name and buf.dtype != torch.float32
+        ]
+        if bad_params or demoted:
+            raise RuntimeError(
+                f"Backbone override must use {dtype} parameters and fp32 RoPE buffers: "
+                f"bad_params={bad_params[:4]} demoted_inv_freq={demoted[:4]}"
+            )
+        backbone.requires_grad_(not vla.config.freeze_backbone)
+        vla.backbone = backbone
+        vla.config.backbone_model_name_or_path = backbone_override
+        vla.config.backbone_config = backbone.config.to_dict()
+        print(
+            f"[eval] backbone override: backbone={backbone_override}; "
+            f"action_head={checkpoint}; processor={checkpoint}; stats={checkpoint}; "
+            f"dtype={dtype}; attention={attn_implementation}; "
+            f"ignored_mtp_keys={len(loading_info.get('unexpected_keys', []))}",
+            flush=True,
+        )
     vla.eval().to(DEVICE)
     unnormalize_action = MeanStdNormalizer(_load_norm_stats(str(checkpoint), "action"))
     normalize_state = None
@@ -127,6 +179,7 @@ class RoboMMEPolicy:
         num_denoising_steps: int = 10,
         temperature: float = 1.0,
         max_subtask_tokens: int = 64,
+        current_frame_only: bool = False,
     ):
         if vla.config.control_frequency_hz is None:
             raise ValueError(
@@ -145,6 +198,7 @@ class RoboMMEPolicy:
         self.num_denoising_steps = num_denoising_steps
         self.temperature = temperature
         self.max_subtask_tokens = max_subtask_tokens
+        self.current_frame_only = bool(current_frame_only)
 
         tok = processor.tokenizer
         self.think_close_id, self.whitespace_ids = answer_span_token_ids(tok)
@@ -168,6 +222,10 @@ class RoboMMEPolicy:
             cfg.history_video_sec, cfg.history_video_fps, self.native_fps
         )
         self.variable_history = bool(getattr(cfg, "variable_history", False))
+        if self.current_frame_only:
+            # One distinct observation; Qwen's video channel requires a two-frame patch.
+            self.n_frames = 2
+            self.variable_history = False
         history = getattr(cfg, "history_image_keys", None)
         self.history_image_keys = list(history) if history else list(self.image_keys)
         unknown = [k for k in self.history_image_keys if k not in self.image_keys]
@@ -183,7 +241,8 @@ class RoboMMEPolicy:
         ]
         history_set = set(self.history_image_keys)
         self._buffer_caps = {
-            k: ((self.n_frames - 1) * self.stride + 1 if k in history_set else 1)
+            k: (1 if self.current_frame_only else
+                ((self.n_frames - 1) * self.stride + 1 if k in history_set else 1))
             for k in self.image_keys
         }
         self.action_horizon = int(cfg.action_horizon)
@@ -217,6 +276,8 @@ class RoboMMEPolicy:
         cur = len(buf) - 1
         if cur < 0:
             raise RuntimeError("call observe() before predict()")
+        if self.current_frame_only:
+            return [cur, cur]
         n, stride = self.n_frames, self.stride
         if self.variable_history:
             avail = cur // stride + 1
