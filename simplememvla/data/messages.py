@@ -37,7 +37,13 @@ def build_embodiment_prompt(
     instruction = instruction.strip().replace("_", " ").rstrip(". ")
     if not instruction:
         raise ValueError("instruction must be a non-empty string")
-    if num_current_cameras:
+    if num_current_cameras and not num_cameras:
+        cameras_clause = (
+            f"You are given the current image from {num_current_cameras} cameras. "
+            if num_current_cameras > 1
+            else "You are given the current image from one camera. "
+        )
+    elif num_current_cameras:
         history_part = (
             f"the recent history video from {num_cameras} cameras"
             if num_cameras and num_cameras > 1

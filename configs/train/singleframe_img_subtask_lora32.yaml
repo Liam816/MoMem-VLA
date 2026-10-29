@@ -1,0 +1,130 @@
+# Single-frame upper bound: released SimpleMemVLA, current frame only, VLM *image* channel.
+#
+# Recipe: full released VLM+DiT init, ViT frozen, LM decoder LoRA32, DiT full, 10 epochs
+# (79476 steps x global batch 60 over 476,857 anchors).
+# Input path: front and wrist are each ONE <image> through the IMAGE channel; no video tokens,
+# no history (memcache/e1_5w_iter.yaml instead feeds front as 2 duplicated frames through the
+# VIDEO channel).
+#
+# Supervision is the original one (condition_source=subtask):
+#   * sub-task text CE on the assistant answer span (vl_loss_weight 1.0, teacher forcing)
+#   * flow-matching action loss (action_loss_weight 1.0) with the DiT conditioned on the
+#     sub-task span's hidden states + token embeddings, exactly as in the released model.
+# Dataset: yinchenghust/robomme_lerobot with sub-task annotations (subtask_online_index):
+# ALL 1600 episodes (16 tasks x 100 official-train episodes), no val split, no in-training eval.
+# Demo-replay frames are excluded as action anchors.
+# The prompt is the original embodiment prompt, with the camera sentence changed to
+# "You are given the current image from 2 cameras." (no history video).
+#
+# Launch on 5 GPUs (48 GB 4090): global batch = 12 per GPU x 5 GPUs x accum 1 = 60.
+#   CUDA_VISIBLE_DEVICES=<5 free ids> bash scripts/train.sh configs/train/singleframe_img_subtask_lora32.yaml
+# max_steps = 10 * 476857 / 60 is only 10 epochs for global batch 60. If you change the GPU count,
+# keep per_device_train_batch_size x GPUs x gradient_accumulation_steps = 60 (or rescale max_steps).
+# Checkpoints are ~45 GB each (full state); keep `save_total_limit` * 45 GB under `df -h /mnt/cpfs`.
+model:
+  backbone_model_name_or_path: /mnt/cpfs/heping/SimpleMemVLA-data/checkpoints/simplememvla_robomme
+  init_from_checkpoint: /mnt/cpfs/heping/SimpleMemVLA-data/checkpoints/simplememvla_robomme
+  init_modules:
+  - backbone
+  - action_head
+  dtype: bfloat16
+  attn_implementation: flash_attention_2
+  model_max_length: 8192
+  freeze_backbone: false
+  freeze_vision_tower: true
+  lm_lora_rank: 32
+  lm_lora_alpha: 32.0
+  lm_lora_dropout: 0.0
+  lm_lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - in_proj_qkv
+  - in_proj_z
+  - in_proj_b
+  - in_proj_a
+  - out_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+  condition_source: subtask
+  action_loss_weight: 1.0
+  vl_loss_weight: 1.0
+  use_proprio: true
+  state_dropout_prob: 0.0
+  timestep_beta_alpha: 1.5
+  timestep_beta_beta: 1.0
+  use_memory: false
+  dit_hidden_size: 2048
+  dit_depth: 16
+  dit_num_heads: 16
+  dit_mlp_ratio: 3.5
+  dit_dropout: 0.0
+  dit_rope_theta: 10000000
+  dit_mrope_section:
+  - 11
+  - 11
+  - 10
+  dit_partial_rotary_factor: 0.25
+data:
+  benchmark: robomme
+  root: /mnt/cpfs/heping/SimpleMemVLA-data/datasets/yinchenghust/robomme_lerobot
+  # No episodes_file / episodes: every episode in the dataset (1600) is used for training.
+  # Warm-started DiT keeps the normalisation it was trained with.
+  stats_path: /mnt/cpfs/heping/SimpleMemVLA-data/checkpoints/simplememvla_robomme/stats.json
+  single_frame: true          # every camera is one current <image>; no video / no history
+  current_frame_only: false   # (that flag is the duplicated-frame VIDEO variant)
+  image_keys:
+  - observation.images.front
+  - observation.images.wrist
+  native_video_fps: 20.0
+  subtask_index_key: subtask_online_index
+  skip_video_demo_frames: true
+  image_aug: false
+  variable_history: false
+training:
+  deepspeed: /mnt/cpfs/heping/SimpleMemVLA/configs/train/memcache/zero2_gpu_adamw_50k.json
+  per_device_train_batch_size: 12
+  gradient_accumulation_steps: 1
+  max_steps: 79476   # 10 epochs: 10 * 476857 anchors / global batch 60
+  warmup_steps: 4000   # 5% of max_steps, as before
+  backbone_lr: 5.0e-06
+  action_head_lr: 5.0e-05
+  weight_decay: 1.0e-08
+  lr_scheduler_type: cosine_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr_rate: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-08
+  max_grad_norm: 1.0
+  optim: adamw_torch
+  bf16: true
+  tf32: true
+  gradient_checkpointing: false
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  dataloader_num_workers: 4
+  dataloader_persistent_workers: true
+  dataloader_pin_memory: true
+  remove_unused_columns: false
+  report_to: wandb
+  logging_steps: 10
+  logging_first_step: true
+  disable_tqdm: true
+  eval_strategy: 'no'   # no val split
+  # 4 full checkpoints (~45 GB each, ~180 GB total): first at step 10000, then 3 evenly spaced
+  # up to the final update -> steps 10000, 33159, 56317, 79476 (first = ceil(79476 * 0.12582)).
+  save_strategy: steps
+  save_first_fraction: 0.12582
+  save_num_checkpoints: 4
+  save_total_limit: 4
+  load_best_model_at_end: false
+  seed: 429
+  data_seed: 429
+  resume: false
+  output_dir: /mnt/cpfs/heping/SimpleMemVLA-data/output/singleframe_img_subtask_lora32_20261028_v1
+  wandb_project: mem-vla                 # W&B project
+  run_name: simplememvla-sf-bs12-e20     # experiment name (W&B run name)
+  ignore_data_skip: false

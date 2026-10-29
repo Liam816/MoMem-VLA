@@ -114,6 +114,8 @@ def train(
     training_args: SFTTrainingArguments,
 ):
     set_seed(training_args.seed)
+    if training_args.wandb_project:
+        os.environ["WANDB_PROJECT"] = training_args.wandb_project
     spec = resolve_benchmark_defaults(data_args)
     mem_meta = resolve_memcache_defaults(model_args, data_args)
 

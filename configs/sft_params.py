@@ -111,7 +111,7 @@ class DataArguments:
         metadata={"help": "stats.json used for action/state normalisation (default <root>/meta)"},
     )
     single_frame: bool = field(
-        default=False, metadata={"help": "Feed every camera as a single current image (no history video)"}
+        default=False, metadata={"help": "Feed every camera as a single current image (no history video). condition_source=prompt: whole-prompt condition; condition_source=subtask: image channel + original sub-task teacher forcing"}
     )
     current_frame_only: bool = field(
         default=False, metadata={"help": "Original subtask teacher forcing with only the current front frame (duplicated temporal pair) and wrist image"}
@@ -124,7 +124,11 @@ class DataArguments:
 @dataclass
 class SFTTrainingArguments(TrainingArguments):
     output_dir: str = field(default="./checkpoints/sft/simplememvla/baseline")
-    run_name: Optional[str] = field(default=None)
+    run_name: Optional[str] = field(default=None, metadata={"help": "Experiment name (W&B run name)"})
+    wandb_project: Optional[str] = field(
+        default=None,
+        metadata={"help": "W&B project name; overrides the WANDB_PROJECT env var when set"},
+    )
     report_to: str | list[str] = field(default="wandb")
 
     per_device_train_batch_size: int = field(default=8)

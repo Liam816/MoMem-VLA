@@ -133,12 +133,13 @@ class SimpleMemVLADataset(Dataset):
                 "current_frame_only=True retains the released video/sub-task interface; "
                 "use single_frame=False and condition_source='subtask'"
             )
-        if self.single_frame != (condition_source == "prompt"):
+        if condition_source == "prompt" and not self.single_frame:
             raise NotImplementedError(
-                "single_frame=True is implemented together with condition_source="
-                "'prompt' (and the history-video recipe with 'subtask'); got "
-                f"single_frame={self.single_frame}, condition_source={condition_source!r}"
+                "condition_source='prompt' is implemented for single_frame=True only; got "
+                f"single_frame={self.single_frame}"
             )
+        # single_frame + 'subtask': every camera enters through the VLM image channel
+        # (no video), with the original sub-task answer span supervised.
         self.root = Path(data_args.root)
         self.ds_meta = LeRobotDatasetMetadata(
             data_args.repo_id,
