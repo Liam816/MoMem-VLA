@@ -180,6 +180,8 @@ def build_policy(args):
         return build_memcache_policy(args)
     if getattr(args, "current_frame_only", False) and getattr(args, "pipelined", False):
         raise ValueError("--current_frame_only is not supported with --pipelined")
+    if checkpoint_config.single_frame and getattr(args, "pipelined", False):
+        raise ValueError("--pipelined is not supported for single_frame checkpoints")
     vla, unnormalize_action, normalize_state = get_vla(
         args.pretrained_checkpoint, args.compute_dtype,
         attn_implementation=args.attn_implementation,
@@ -226,7 +228,12 @@ def build_policy(args):
         return batched, buffer_factory, normalize_state
 
     batched_class, buffer_class = BatchedEvalPolicy, RoboMMEPolicy
-    if getattr(vla.config, "use_memory", False):
+    if getattr(vla.config, "single_frame", False):
+        from robomme_sim.singleframe_policy import SingleFrameSubtaskBuffer
+        buffer_class = SingleFrameSubtaskBuffer
+        print("[eval] single-frame image-channel checkpoint: current frame of every camera as <image>; "
+              "generated sub-task conditions the DiT", flush=True)
+    elif getattr(vla.config, "use_memory", False):
         from robomme_sim.subtask_memory_policy import SubtaskMemoryBatchedPolicy, SubtaskMemoryBuffer
         batched_class, buffer_class = SubtaskMemoryBatchedPolicy, SubtaskMemoryBuffer
     batched = batched_class(

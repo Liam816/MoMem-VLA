@@ -1,0 +1,18 @@
+# Single-frame image-channel + generated sub-task checkpoints (configs/train/singleframe_img_subtask_*).
+# Full RoboMME protocol: 16 tasks x 50 frozen test episodes. Set the checkpoint with CHECKPOINT=...
+_base_: robomme.yaml
+tasks: null
+dataset_split: test
+episodes_per_task: 50
+group_size: 25
+fail_on_env_error: true
+execute_horizon: 16
+max_steps: 1300
+num_denoising_steps: 10
+eval_temperature: 1.0
+max_subtask_tokens: 64
+compute_dtype: bfloat16
+attn_implementation: flash_attention_2
+pipelined: false
+video_max_per_task: 1
+worker_timeout: 21600.0

@@ -128,23 +128,29 @@ class BatchedEvalPolicy:
         emb = embed(iid)
         for i, p in enumerate(processed_list):
             pol = p["policy"]
-            vid_feat = torch.cat(
-                [pol._patch_feat_cache[k] for k in p["video_patch_keys"]], dim=0
-            )
             vmask = iid[i] == video_token_id
-            if int(vmask.sum()) != vid_feat.shape[0]:
-                raise RuntimeError(
-                    f"video token count {int(vmask.sum())} != cached features "
-                    f"{vid_feat.shape[0]} (env {i})"
+            if p["video_patch_keys"]:
+                vid_feat = torch.cat(
+                    [pol._patch_feat_cache[k] for k in p["video_patch_keys"]], dim=0
                 )
-            emb[i][vmask] = vid_feat.to(emb.dtype)
+                if int(vmask.sum()) != vid_feat.shape[0]:
+                    raise RuntimeError(
+                        f"video token count {int(vmask.sum())} != cached features "
+                        f"{vid_feat.shape[0]} (env {i})"
+                    )
+                emb[i][vmask] = vid_feat.to(emb.dtype)
+            elif int(vmask.sum()):
+                raise RuntimeError(f"env {i}: video tokens in an image-only prompt")
             if has_images:
                 imask = iid[i] == image_token_id
                 if int(imask.sum()) != img_feats_per_env[i].shape[0]:
                     raise RuntimeError("image token count != wrist features")
                 emb[i][imask] = img_feats_per_env[i].to(emb.dtype)
 
-        grids_cat = torch.cat([p["video_grid_thw"] for p in processed_list], dim=0).to(dev)
+        grids_cat = (
+            torch.cat([p["video_grid_thw"] for p in processed_list], dim=0).to(dev)
+            if "video_grid_thw" in processed_list[0] else None
+        )
         position_ids, rope_deltas = qwen.get_rope_index(
             iid,
             image_grid_thw=img_grids_cat,
