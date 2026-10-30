@@ -4,6 +4,7 @@
 
 </div>
 
+
 <h1 align="center">🔥 SimpleMemVLA 🔥</h1>
 
 <h3 align="center">A Simple but Effective Native-Video Memory for Vision-Language-Action Models</h3>
