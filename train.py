@@ -105,48 +105,43 @@ def resolve_memcache_defaults(model_args: ModelArguments, data_args: DataArgumen
             )
     elif data_args.mem_feature_dir:
         raise ValueError("--mem_feature_dir is set but --use_memory is false")
+    perc = model_args.use_memory and model_args.mem_arch == "perc_queue"
+    if perc:
+        if data_args.mem_window_sec > 0:
+            raise ValueError(
+                "mem_arch=perc_queue replays the whole episode through its fixed-size "
+                "queue; set mem_window_sec <= 0"
+            )
+        grid = mem_meta["grid"]
+        if grid[0] != grid[1] or model_args.mem_frame_pool != grid[0]:
+            raise ValueError(
+                f"perc_queue stores native merger tokens; set mem_frame_pool={grid[0]} "
+                f"(feature grid {grid}) and pool with perc_mem_score_pool / perc_mem_read_pool"
+            )
+        needs_labels = model_args.perc_mem_evict == "oracle" or (
+            model_args.perc_mem_evict == "learned" and not model_args.perc_mem_freeze_scorer
+        )
+        if needs_labels and not data_args.perc_mem_label_dir:
+            raise ValueError(
+                f"perc_mem_evict={model_args.perc_mem_evict!r} with a trainable scorer needs "
+                "perc_mem_label_dir (teacher utilities); otherwise use fifo/uniform/random or "
+                "perc_mem_freeze_scorer"
+            )
+        if not data_args.perc_mem_label_dir:
+            # Eviction is not differentiable: without labels the scorer gets no gradient.
+            model_args.perc_mem_freeze_scorer = True
+    elif data_args.perc_mem_label_dir:
+        raise ValueError("perc_mem_label_dir is only used by mem_arch=perc_queue")
     return mem_meta
 
 
-def train(
+def build_model(
     model_args: ModelArguments,
     data_args: DataArguments,
-    training_args: SFTTrainingArguments,
-):
-    set_seed(training_args.seed)
-    if training_args.wandb_project:
-        os.environ["WANDB_PROJECT"] = training_args.wandb_project
-    spec = resolve_benchmark_defaults(data_args)
-    mem_meta = resolve_memcache_defaults(model_args, data_args)
-
-    processor = AutoProcessor.from_pretrained(
-        model_args.init_from_checkpoint or model_args.backbone_model_name_or_path,
-        trust_remote_code=model_args.trust_remote_code,
-        padding_side="right",
-        model_max_length=model_args.model_max_length,
-    )
-
-    mem_frame_pool = model_args.mem_frame_pool if model_args.use_memory else None
-    train_dataset = SimpleMemVLADataset(
-        data_args,
-        spec,
-        condition_source=model_args.condition_source,
-        mem_frame_pool=mem_frame_pool,
-    )
-    eval_dataset = None
-    if data_args.val_episodes_file:
-        eval_args = dataclasses.replace(
-            data_args,
-            episodes=read_episodes_file(data_args.val_episodes_file),
-            image_aug=False,
-        )
-        eval_dataset = SimpleMemVLADataset(
-            eval_args,
-            spec,
-            condition_source=model_args.condition_source,
-            mem_frame_pool=mem_frame_pool,
-        )
-
+    spec: BenchmarkSpec,
+    train_dataset: SimpleMemVLADataset,
+    mem_meta: dict,
+) -> SimpleMemVLAForActionPrediction:
     config = SimpleMemVLAConfig(
         backbone_model_name_or_path=model_args.backbone_model_name_or_path,
         action_dim=spec.action_dim,
@@ -202,6 +197,26 @@ def train(
         mem_fusion=model_args.mem_fusion,
         mem_dropout=model_args.mem_dropout,
         mem_dropout_prob=model_args.mem_dropout_prob,
+        perc_mem_window=model_args.perc_mem_window,
+        perc_mem_queue=model_args.perc_mem_queue,
+        perc_mem_evict=model_args.perc_mem_evict,
+        perc_mem_score_pool=model_args.perc_mem_score_pool,
+        perc_mem_read_pool=model_args.perc_mem_read_pool,
+        perc_mem_scorer_hidden_size=model_args.perc_mem_scorer_hidden_size,
+        perc_mem_scorer_num_heads=model_args.perc_mem_scorer_num_heads,
+        perc_mem_scorer_depth=model_args.perc_mem_scorer_depth,
+        perc_mem_scorer_mlp_ratio=model_args.perc_mem_scorer_mlp_ratio,
+        perc_mem_scorer_dropout=model_args.perc_mem_scorer_dropout,
+        perc_mem_scorer_use_redund=model_args.perc_mem_scorer_use_redund,
+        perc_mem_reader_hidden_size=model_args.perc_mem_reader_hidden_size,
+        perc_mem_reader_num_heads=model_args.perc_mem_reader_num_heads,
+        perc_mem_reader_num_queries=model_args.perc_mem_reader_num_queries,
+        perc_mem_reader_depth=model_args.perc_mem_reader_depth,
+        perc_mem_reader_mlp_ratio=model_args.perc_mem_reader_mlp_ratio,
+        perc_mem_scorer_loss_weight=model_args.perc_mem_scorer_loss_weight,
+        perc_mem_rank_margin=model_args.perc_mem_rank_margin,
+        perc_mem_oracle_prob=model_args.perc_mem_oracle_prob,
+        perc_mem_freeze_scorer=model_args.perc_mem_freeze_scorer,
     )
 
     if model_args.init_from_checkpoint:
@@ -231,6 +246,49 @@ def train(
         trainable = [n for n, p in model.backbone.named_parameters() if p.requires_grad]
         if not trainable or any(not is_lora_parameter(n) for n in trainable):
             raise RuntimeError("LM LoRA training must update only adapter A/B parameters in backbone")
+    return model
+
+
+def train(
+    model_args: ModelArguments,
+    data_args: DataArguments,
+    training_args: SFTTrainingArguments,
+):
+    set_seed(training_args.seed)
+    if training_args.wandb_project:
+        os.environ["WANDB_PROJECT"] = training_args.wandb_project
+    spec = resolve_benchmark_defaults(data_args)
+    mem_meta = resolve_memcache_defaults(model_args, data_args)
+
+    processor = AutoProcessor.from_pretrained(
+        model_args.init_from_checkpoint or model_args.backbone_model_name_or_path,
+        trust_remote_code=model_args.trust_remote_code,
+        padding_side="right",
+        model_max_length=model_args.model_max_length,
+    )
+
+    mem_frame_pool = model_args.mem_frame_pool if model_args.use_memory else None
+    train_dataset = SimpleMemVLADataset(
+        data_args,
+        spec,
+        condition_source=model_args.condition_source,
+        mem_frame_pool=mem_frame_pool,
+    )
+    eval_dataset = None
+    if data_args.val_episodes_file:
+        eval_args = dataclasses.replace(
+            data_args,
+            episodes=read_episodes_file(data_args.val_episodes_file),
+            image_aug=False,
+        )
+        eval_dataset = SimpleMemVLADataset(
+            eval_args,
+            spec,
+            condition_source=model_args.condition_source,
+            mem_frame_pool=mem_frame_pool,
+        )
+
+    model = build_model(model_args, data_args, spec, train_dataset, mem_meta)
     if training_args.process_index == 0:
         if model_args.lm_lora_rank > 0:
             print(f"[lora] rank={model_args.lm_lora_rank}; alpha={model_args.lm_lora_alpha}; dropout={model_args.lm_lora_dropout}; targeted_modules={len(model.lm_lora_targets)}; base LM frozen")

@@ -1,0 +1,57 @@
+# singleframe_img_subtask_lora32.yaml + perception memory v1 (MoMem-VLA perc-mem-v1-design.md).
+# Recurrent memory not included. Everything except the memory branch, output_dir and
+# run_name is inherited unchanged: released VLM+DiT init, frozen ViT, LM LoRA32, front and
+# wrist as current <image>s, sub-task teacher forcing, all 1600 episodes, 79476 steps,
+# 5 GPUs x 12 (global 60).
+#
+# Memory branch: every front keyframe (2 fps, from the episode's first frame, demo replay
+# included) is written into a fixed queue of K=28 learned-eviction frames + W=4 most recent
+# frames, stored as native 8x8 merger tokens; the scorer and the reader pool them to 4x4.
+# A Perceiver resampler reads the <=32 frames (<=512 tokens) into c_mem, added to the DiT
+# adaLN condition with a zero-initialised output layer, so training starts exactly from the
+# single-frame model. Module size: scorer 82.7M + reader 22.7M = 105.4M.
+#
+# Keyframe features (native 8x8, fp32 ViT of the released checkpoint, fp16) for all 1600
+# episodes live in /dev/shm (RAM; lost on container restart -- re-run
+# scripts/extract_mem_features.py --out <that dir> to rebuild).
+# learned / oracle need teacher utilities: export PERC_MEM_LABEL_DIR=<dir of
+# episode_XXXXXX.npy, (N_key, N_key)>. Label-free variants: fifo / uniform / random.yaml.
+_base_: ../singleframe_img_subtask_lora32.yaml
+
+model:
+  use_memory: true
+  mem_arch: perc_queue
+  mem_fusion: adaln_add          # prefix.yaml: 512 read tokens as DiT prefix instead
+  mem_frame_pool: 8              # keep the native 8x8 grid in the queue
+  mem_dropout_prob: 0.0
+  perc_mem_window: 4             # W (2 s)
+  perc_mem_queue: 28             # K -> 32 frames
+  perc_mem_evict: learned
+  perc_mem_score_pool: 4
+  perc_mem_read_pool: 4
+  # Scorer scaled to ~83M (design-doc size: hidden 256 / 4 heads / depth 2, ~2.6M).
+  perc_mem_scorer_hidden_size: 1024
+  perc_mem_scorer_num_heads: 16
+  perc_mem_scorer_depth: 6
+  perc_mem_scorer_mlp_ratio: 4.0
+  perc_mem_scorer_dropout: 0.1
+  perc_mem_scorer_use_redund: true
+  perc_mem_reader_hidden_size: 512
+  perc_mem_reader_num_heads: 8
+  perc_mem_reader_num_queries: 8
+  perc_mem_reader_depth: 2
+  perc_mem_reader_mlp_ratio: 4.0
+  perc_mem_scorer_loss_weight: 1.0
+  perc_mem_rank_margin: 0.1
+  perc_mem_oracle_prob: 0.0
+
+data:
+  mem_feature_dir: /dev/shm/heping/SimpleMemVLA-data/features/robomme_released_fp32_grid8_all16
+  mem_fps: 2.0
+  mem_window_sec: 0              # replay the whole episode; the queue is the only budget
+  perc_mem_label_dir: ${PERC_MEM_LABEL_DIR:-}
+
+training:
+  memory_lr: 1.0e-4
+  output_dir: /mnt/cpfs/heping/SimpleMemVLA-data/output/singleframe_img_subtask_lora32_percmem_learned_v1
+  run_name: simplememvla-sf-bs12-e20-percmem-learned

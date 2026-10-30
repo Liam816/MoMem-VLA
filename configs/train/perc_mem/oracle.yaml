@@ -1,0 +1,9 @@
+# Scorer upper bound: evict by the teacher utilities themselves.
+_base_: base.yaml
+
+model:
+  perc_mem_evict: oracle
+
+training:
+  output_dir: /mnt/cpfs/heping/SimpleMemVLA-data/output/singleframe_img_subtask_lora32_percmem_oracle_v1
+  run_name: simplememvla-sf-bs12-e20-percmem-oracle

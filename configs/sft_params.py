@@ -62,6 +62,26 @@ class ModelArguments:
     mem_fusion: str = field(default="adaln_add", metadata={"help": "adaln_add | prefix_tokens"})
     mem_dropout: float = field(default=0.0)
     mem_dropout_prob: float = field(default=0.0)
+    perc_mem_window: int = field(default=4, metadata={"help": "perc_queue: FIFO window W (keyframes)"})
+    perc_mem_queue: int = field(default=28, metadata={"help": "perc_queue: learned-eviction queue K"})
+    perc_mem_evict: str = field(default="learned", metadata={"help": "learned | fifo | uniform | random | oracle"})
+    perc_mem_score_pool: int = field(default=4, metadata={"help": "scorer pools each stored frame to p x p"})
+    perc_mem_read_pool: int = field(default=4, metadata={"help": "reader pools each stored frame to p x p"})
+    perc_mem_scorer_hidden_size: int = field(default=256)
+    perc_mem_scorer_num_heads: int = field(default=4)
+    perc_mem_scorer_depth: int = field(default=2)
+    perc_mem_scorer_mlp_ratio: float = field(default=4.0)
+    perc_mem_scorer_dropout: float = field(default=0.1)
+    perc_mem_scorer_use_redund: bool = field(default=True)
+    perc_mem_reader_hidden_size: int = field(default=512)
+    perc_mem_reader_num_heads: int = field(default=8)
+    perc_mem_reader_num_queries: int = field(default=8)
+    perc_mem_reader_depth: int = field(default=2)
+    perc_mem_reader_mlp_ratio: float = field(default=4.0)
+    perc_mem_scorer_loss_weight: float = field(default=1.0)
+    perc_mem_rank_margin: float = field(default=0.1)
+    perc_mem_oracle_prob: float = field(default=0.0, metadata={"help": "learned mode: chance a training eviction follows the labels"})
+    perc_mem_freeze_scorer: bool = field(default=False)
 
 
 @dataclass
@@ -117,8 +137,14 @@ class DataArguments:
         default=False, metadata={"help": "Original subtask teacher forcing with only the current front frame (duplicated temporal pair) and wrist image"}
     )
     mem_feature_dir: Optional[str] = field(default=None)
-    mem_window_sec: float = field(default=60.0)
+    mem_window_sec: float = field(
+        default=60.0, metadata={"help": "history kept before the memory module; <= 0: whole episode"}
+    )
     mem_fps: float = field(default=2.0)
+    perc_mem_label_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "per-episode (N_key, N_key) teacher utilities u[t, tau] for the perc_queue scorer"},
+    )
 
 
 @dataclass

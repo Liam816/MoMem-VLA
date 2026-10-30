@@ -1,0 +1,9 @@
+# Fusion ablation: the 512 read tokens enter the DiT sequence as a prefix ([cond | mem | state | action]) instead of c_mem.
+_base_: base.yaml
+
+model:
+  mem_fusion: prefix_tokens
+
+training:
+  output_dir: /mnt/cpfs/heping/SimpleMemVLA-data/output/singleframe_img_subtask_lora32_percmem_prefix_v1
+  run_name: simplememvla-sf-bs12-e20-percmem-prefix

@@ -64,6 +64,26 @@ class SimpleMemVLAConfig(PretrainedConfig):
         mem_fusion: str = "adaln_add",
         mem_dropout: float = 0.0,
         mem_dropout_prob: float = 0.0,
+        perc_mem_window: int = 4,
+        perc_mem_queue: int = 28,
+        perc_mem_evict: str = "learned",
+        perc_mem_score_pool: int = 4,
+        perc_mem_read_pool: int = 4,
+        perc_mem_scorer_hidden_size: int = 256,
+        perc_mem_scorer_num_heads: int = 4,
+        perc_mem_scorer_depth: int = 2,
+        perc_mem_scorer_mlp_ratio: float = 4.0,
+        perc_mem_scorer_dropout: float = 0.1,
+        perc_mem_scorer_use_redund: bool = True,
+        perc_mem_reader_hidden_size: int = 512,
+        perc_mem_reader_num_heads: int = 8,
+        perc_mem_reader_num_queries: int = 8,
+        perc_mem_reader_depth: int = 2,
+        perc_mem_reader_mlp_ratio: float = 4.0,
+        perc_mem_scorer_loss_weight: float = 1.0,
+        perc_mem_rank_margin: float = 0.1,
+        perc_mem_oracle_prob: float = 0.0,
+        perc_mem_freeze_scorer: bool = False,
         backbone_config: dict | None = None,
         **kwargs,
     ):
@@ -133,7 +153,7 @@ class SimpleMemVLAConfig(PretrainedConfig):
         self.mem_window_sec = mem_window_sec
         self.mem_fps = mem_fps
         self.mem_frame_pool = mem_frame_pool
-        if mem_arch not in ("perceiver", "naive_tokens"):
+        if mem_arch not in ("perceiver", "naive_tokens", "perc_queue"):
             raise ValueError(f"Unsupported mem_arch: {mem_arch}")
         if use_memory and mem_arch == "naive_tokens" and mem_fusion != "prefix_tokens":
             raise ValueError("naive_tokens requires mem_fusion=prefix_tokens")
@@ -147,4 +167,31 @@ class SimpleMemVLAConfig(PretrainedConfig):
         self.mem_fusion = mem_fusion
         self.mem_dropout = mem_dropout
         self.mem_dropout_prob = mem_dropout_prob
+        # Perception memory (mem_arch="perc_queue"): K learned-eviction queue + W FIFO window,
+        # read by a Perceiver resampler into the DiT adaLN condition (or prefix tokens).
+        from simplememvla.model.perc_memory import EVICT_MODES
+        if perc_mem_evict not in EVICT_MODES:
+            raise ValueError(f"perc_mem_evict must be one of {EVICT_MODES}, got {perc_mem_evict!r}")
+        if not 0.0 <= perc_mem_oracle_prob <= 1.0:
+            raise ValueError("perc_mem_oracle_prob must be in [0, 1]")
+        self.perc_mem_window = perc_mem_window
+        self.perc_mem_queue = perc_mem_queue
+        self.perc_mem_evict = perc_mem_evict
+        self.perc_mem_score_pool = perc_mem_score_pool
+        self.perc_mem_read_pool = perc_mem_read_pool
+        self.perc_mem_scorer_hidden_size = perc_mem_scorer_hidden_size
+        self.perc_mem_scorer_num_heads = perc_mem_scorer_num_heads
+        self.perc_mem_scorer_depth = perc_mem_scorer_depth
+        self.perc_mem_scorer_mlp_ratio = perc_mem_scorer_mlp_ratio
+        self.perc_mem_scorer_dropout = perc_mem_scorer_dropout
+        self.perc_mem_scorer_use_redund = perc_mem_scorer_use_redund
+        self.perc_mem_reader_hidden_size = perc_mem_reader_hidden_size
+        self.perc_mem_reader_num_heads = perc_mem_reader_num_heads
+        self.perc_mem_reader_num_queries = perc_mem_reader_num_queries
+        self.perc_mem_reader_depth = perc_mem_reader_depth
+        self.perc_mem_reader_mlp_ratio = perc_mem_reader_mlp_ratio
+        self.perc_mem_scorer_loss_weight = perc_mem_scorer_loss_weight
+        self.perc_mem_rank_margin = perc_mem_rank_margin
+        self.perc_mem_oracle_prob = perc_mem_oracle_prob
+        self.perc_mem_freeze_scorer = perc_mem_freeze_scorer
         self.backbone_config = backbone_config

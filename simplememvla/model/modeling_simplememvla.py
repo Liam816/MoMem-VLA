@@ -14,6 +14,7 @@ from transformers.utils import ModelOutput
 from simplememvla.model.configuration_simplememvla import SimpleMemVLAConfig
 from simplememvla.model.dit_action_head import DiTActionHead
 from simplememvla.model.memory import NaiveVisionTokenCache, VisionTokenMemory
+from simplememvla.model.perc_memory import PerceptionMemory
 from simplememvla.model.lora import inject_lm_lora, is_lora_parameter
 
 MEMORY_MODES = ("normal", "zero", "shuffle")
@@ -27,6 +28,7 @@ class SimpleMemVLAOutput(ModelOutput):
     vl_loss: torch.Tensor | None = None
     pred_velocity: torch.Tensor | None = None
     mem_norm: torch.Tensor | None = None
+    mem_rank_loss: torch.Tensor | None = None
 
 
 def load_checkpoint_state_dict(checkpoint: str) -> dict[str, torch.Tensor]:
@@ -142,6 +144,30 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                     feature_dim=config.mem_feature_dim,
                     cond_dim=config.dit_hidden_size,
                     tokens_per_frame=config.mem_frame_pool**2,
+                )
+            elif config.mem_arch == "perc_queue":
+                self.memory = PerceptionMemory(
+                    feature_dim=config.mem_feature_dim,
+                    cond_dim=config.dit_hidden_size,
+                    window_frames=config.perc_mem_window,
+                    queue_frames=config.perc_mem_queue,
+                    evict_mode=config.perc_mem_evict,
+                    score_pool=config.perc_mem_score_pool,
+                    read_pool=config.perc_mem_read_pool,
+                    scorer_hidden_size=config.perc_mem_scorer_hidden_size,
+                    scorer_num_heads=config.perc_mem_scorer_num_heads,
+                    scorer_depth=config.perc_mem_scorer_depth,
+                    scorer_mlp_ratio=config.perc_mem_scorer_mlp_ratio,
+                    scorer_dropout=config.perc_mem_scorer_dropout,
+                    scorer_use_redund=config.perc_mem_scorer_use_redund,
+                    reader_hidden_size=config.perc_mem_reader_hidden_size,
+                    reader_num_heads=config.perc_mem_reader_num_heads,
+                    reader_num_queries=config.perc_mem_reader_num_queries,
+                    reader_depth=config.perc_mem_reader_depth,
+                    reader_mlp_ratio=config.perc_mem_reader_mlp_ratio,
+                    fusion=config.mem_fusion,
+                    rank_margin=config.perc_mem_rank_margin,
+                    oracle_prob=config.perc_mem_oracle_prob,
                 )
             else:
                 self.memory = VisionTokenMemory(
@@ -325,6 +351,8 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         if self.config.freeze_vision_tower:
             for param in self.backbone.model.visual.parameters():
                 param.requires_grad = False
+        if isinstance(self.memory, PerceptionMemory):
+            self.memory.scorer.requires_grad_(not self.config.perc_mem_freeze_scorer)
 
     def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
         self.backbone.gradient_checkpointing_enable(
@@ -435,12 +463,29 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         mem_mask: torch.Tensor | None,
         device: torch.device,
         mem_mode: str = "normal",
+        mem_utility: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
         """Return memory vector, prefix tokens and their valid-key mask."""
+        return self._memory_inputs_with_aux(
+            mem_feats, mem_age, mem_mask, device, mem_mode, mem_utility
+        )[:3]
+
+    def _memory_inputs_with_aux(
+        self,
+        mem_feats: torch.Tensor | None,
+        mem_age: torch.Tensor | None,
+        mem_mask: torch.Tensor | None,
+        device: torch.device,
+        mem_mode: str = "normal",
+        mem_utility: torch.Tensor | None = None,
+    ) -> tuple[
+        torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None
+    ]:
+        """``_memory_inputs`` plus the perception-memory scorer rank loss (or ``None``)."""
         if mem_mode not in MEMORY_MODES:
             raise ValueError(f"mem_mode must be one of {MEMORY_MODES}, got {mem_mode!r}")
         if self.memory is None or mem_mode == "zero":
-            return None, None, None
+            return None, None, None, None
         if mem_feats is None or mem_age is None or mem_mask is None:
             raise ValueError("use_memory=True requires mem_feats, mem_age and mem_mask")
         mem_feats = mem_feats.to(device=device)
@@ -450,20 +495,26 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             mem_feats, mem_age, mem_mask = (
                 t.roll(1, dims=0) for t in (mem_feats, mem_age, mem_mask)
             )
-        out = self.memory(mem_feats, mem_age, mem_mask)
-        if self.config.mem_arch == "naive_tokens":
+            if mem_utility is not None:
+                mem_utility = mem_utility.roll(1, dims=0)
+        rank_loss = None
+        if self.config.mem_arch == "perc_queue":
+            out, rank_loss = self.memory(mem_feats, mem_age, mem_mask, utility=mem_utility)
+        else:
+            out = self.memory(mem_feats, mem_age, mem_mask)
+        if isinstance(out, tuple):  # prefix tokens + their valid mask
             tokens, token_mask = out
             if self.training and self.config.mem_dropout_prob > 0.0:
                 keep = torch.rand(tokens.shape[0], device=device) >= self.config.mem_dropout_prob
                 token_mask = token_mask & keep[:, None]
                 tokens = tokens.masked_fill(~token_mask[..., None], 0)
-            return None, tokens, token_mask
+            return None, tokens, token_mask, rank_loss
         if self.training and self.config.mem_dropout_prob > 0.0:
             keep = torch.rand(out.shape[0], device=device) >= self.config.mem_dropout_prob
             out = out * keep.to(dtype=out.dtype).view(-1, *([1] * (out.ndim - 1)))
         if self.config.mem_fusion == "adaln_add":
-            return out, None, None
-        return None, out, None
+            return out, None, None, rank_loss
+        return None, out, None, rank_loss
 
     def _memory_condition(self, *args, **kwargs):
         # Compatibility for existing diagnostics of the original memory branch.
@@ -499,6 +550,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         mem_feats: torch.Tensor | None = None,
         mem_age: torch.Tensor | None = None,
         mem_mask: torch.Tensor | None = None,
+        mem_utility: torch.Tensor | None = None,
         noise: torch.Tensor | None = None,
         timesteps: torch.Tensor | None = None,
         mem_mode: str = "normal",
@@ -518,6 +570,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
         pred_velocity = None
         total_loss = None
         mem_norm = None
+        mem_rank_loss = None
         if actions is not None:
             actions = actions.to(device=hidden_states.device, dtype=hidden_states.dtype)
             batch_size = actions.shape[0]
@@ -540,8 +593,18 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                 raise ValueError("action_mask is required when training on actions")
             action_mask = action_mask.to(device=actions.device)
             span = self._condition_span(labels, condition_span)
-            memory_cond, memory_tokens, memory_attention_mask = self._memory_inputs(
-                mem_feats, mem_age, mem_mask, hidden_states.device, mem_mode
+            (
+                memory_cond,
+                memory_tokens,
+                memory_attention_mask,
+                mem_rank_loss,
+            ) = self._memory_inputs_with_aux(
+                mem_feats,
+                mem_age,
+                mem_mask,
+                hidden_states.device,
+                mem_mode,
+                mem_utility=mem_utility,
             )
             mem_out = memory_cond if memory_cond is not None else memory_tokens
             if mem_out is not None:
@@ -571,6 +634,8 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
                 action_mask=action_mask,
             )
             total_loss = self.config.action_loss_weight * action_loss
+            if mem_rank_loss is not None and self.config.perc_mem_scorer_loss_weight:
+                total_loss = total_loss + self.config.perc_mem_scorer_loss_weight * mem_rank_loss
 
         if vl_loss is not None and self.config.vl_loss_weight:
             weighted_vl = self.config.vl_loss_weight * vl_loss
@@ -582,6 +647,7 @@ class SimpleMemVLAForActionPrediction(PreTrainedModel):
             vl_loss=vl_loss,
             pred_velocity=pred_velocity,
             mem_norm=mem_norm,
+            mem_rank_loss=mem_rank_loss,
         )
 
     @torch.no_grad()

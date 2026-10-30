@@ -34,9 +34,14 @@ def answer_span_token_ids(tokenizer) -> tuple[int | None, tuple[int, ...]]:
 
 
 def pad_memory(
-    feats: list[torch.Tensor], ages: list[torch.Tensor]
+    feats: list[torch.Tensor],
+    ages: list[torch.Tensor],
+    utilities: list[torch.Tensor] | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Right-pad per-sample keyframe stacks ``(K_i, N, D)`` to ``(B, K_max, N, D)``."""
+    """Right-pad per-sample keyframe stacks ``(K_i, N, D)`` to ``(B, K_max, N, D)``.
+
+    Optional perception-memory utility matrices ``(K_i, K_i)`` are padded the same way.
+    """
     batch_size = len(feats)
     k_max = max(f.shape[0] for f in feats)
     _, num_tokens, dim = feats[0].shape
@@ -48,7 +53,12 @@ def pad_memory(
         mem_feats[b, :k] = f
         mem_age[b, :k] = a
         mem_mask[b, :k] = True
-    return {"mem_feats": mem_feats, "mem_age": mem_age, "mem_mask": mem_mask}
+    out = {"mem_feats": mem_feats, "mem_age": mem_age, "mem_mask": mem_mask}
+    if utilities is not None:
+        out["mem_utility"] = torch.zeros(batch_size, k_max, k_max, dtype=torch.float32)
+        for b, u in enumerate(utilities):
+            out["mem_utility"][b, : u.shape[0], : u.shape[1]] = u
+    return out
 
 
 class SimpleMemVLADataCollator:
@@ -153,6 +163,11 @@ class SimpleMemVLADataCollator:
                 pad_memory(
                     [feature["mem_feats"] for feature in features],
                     [feature["mem_age"] for feature in features],
+                    utilities=(
+                        [feature["mem_utility"] for feature in features]
+                        if "mem_utility" in features[0]
+                        else None
+                    ),
                 )
             )
         if "pixel_values" in encoded[0]:

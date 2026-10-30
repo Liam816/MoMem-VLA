@@ -44,10 +44,11 @@ def select_mem_keyframes(
 ) -> tuple[int, int]:
     """Keyframes ``k`` (frame ``k * stride``) with ``t - window < k * stride <= t``.
 
+    ``window_frames <= 0`` keeps every keyframe since the episode start.
     Shared by training and rollout so both see the same cache.
     """
     k_max = min(frame_index // stride, num_keyframes - 1)
-    k_min = max(0, (frame_index - window_frames) // stride + 1)
+    k_min = 0 if window_frames <= 0 else max(0, (frame_index - window_frames) // stride + 1)
     if k_max < k_min:
         raise ValueError(
             f"no memory keyframe for frame {frame_index} (stride={stride}, "
@@ -294,6 +295,8 @@ class SimpleMemVLADataset(Dataset):
         self.mem_window_frames = round(data_args.mem_window_sec * self.native_fps)
         self.mem_grid = tuple(int(v) for v in self.mem_meta["grid"])
         self.mem_frame_pool = int(mem_frame_pool)
+        # Teacher utilities for the perception-memory scorer (mem_arch=perc_queue).
+        self.perc_mem_label_dir = getattr(data_args, "perc_mem_label_dir", None)
 
     def _mem_array(self, episode_index: int) -> np.ndarray:
         arr = self._mem_arrays.get(episode_index)
@@ -319,7 +322,19 @@ class SimpleMemVLADataset(Dataset):
         feats = pool_mem_tokens(feats, self.mem_grid, self.mem_frame_pool)
         keyframes = torch.arange(k_min, k_max + 1, dtype=torch.float32) * self.mem_stride
         age = (frame_index - keyframes) / self.native_fps
-        return {"mem_feats": feats, "mem_age": age}
+        out = {"mem_feats": feats, "mem_age": age}
+        if self.perc_mem_label_dir:
+            path = mem_episode_path(self.perc_mem_label_dir, episode_index)
+            if not path.is_file():
+                raise FileNotFoundError(f"Missing perception-memory labels {path}")
+            labels = np.load(path, mmap_mode="r")
+            if labels.shape != (arr.shape[0], arr.shape[0]):
+                raise ValueError(
+                    f"{path} has shape {labels.shape}; expected ({arr.shape[0]}, {arr.shape[0]})"
+                )
+            window = np.array(labels[k_min : k_max + 1, k_min : k_max + 1], dtype=np.float32)
+            out["mem_utility"] = torch.from_numpy(window)
+        return out
 
     def __len__(self):
         if self._anchor_indices is not None:

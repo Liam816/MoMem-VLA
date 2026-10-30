@@ -1,0 +1,12 @@
+# Label-free eviction baseline: uniform.
+_base_: base.yaml
+
+model:
+  perc_mem_evict: uniform
+
+data:
+  perc_mem_label_dir: null
+
+training:
+  output_dir: /mnt/cpfs/heping/SimpleMemVLA-data/output/singleframe_img_subtask_lora32_percmem_uniform_v1
+  run_name: simplememvla-sf-bs12-e20-percmem-uniform

@@ -94,6 +94,8 @@ class SimpleMemVLATrainer(Trainer):
         self.data_root = data_root
         self.stats_path = stats_path
         self._metric_sums = {"action_loss": 0.0, "vl_loss": 0.0, "mem_norm": 0.0}
+        if getattr(self.model.config, "mem_arch", None) == "perc_queue":
+            self._metric_sums["mem_rank_loss"] = 0.0
         self._metric_count = 0
         if getattr(self.args, "save_first_fraction", None) is not None:
             self.add_callback(UniformCheckpointCallback())
@@ -257,6 +259,8 @@ class SimpleMemVLATrainer(Trainer):
             )
             if outputs.mem_norm is not None:
                 self._metric_sums["mem_norm"] += float(outputs.mem_norm.cpu())
+            if outputs.mem_rank_loss is not None:
+                self._metric_sums["mem_rank_loss"] += float(outputs.mem_rank_loss.detach().cpu())
             self._metric_count += 1
 
         return (loss, outputs) if return_outputs else loss
